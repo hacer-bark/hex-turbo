@@ -1,0 +1,43 @@
+[package]
+name = "hex-turbo"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+authors = ["Hacer"]
+
+[features]
+default = ["std", "simd", "avx512"]
+std = []
+simd = ["std"]
+avx512 = ["std", "simd"]
+
+[dev-dependencies]
+rand = "0.9"
+criterion = { version = "0.7", features = ["html_reports"] }
+hex = "0.4"
+faster-hex = "0.10"
+hex-simd = "0.8"
+hex-turbo = { path = "." }
+
+[[bench]]
+name = "encoding_bench"
+harness = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true 
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[dependencies]
+hex = "0.4.3"
