@@ -16,7 +16,7 @@ use hex::{decode as decode_std, encode as encode_std};
 // 3. Competitor 2: The 'faster-hex' crate
 use faster_hex::{hex_decode as decode_fast, hex_encode as encode_fast};
 
-// 4. Competitor 3: The 'hex-simd' crate (updated to zero-allocation via append + truncate)
+// 4. Competitor 3: The 'hex-simd' crate
 use hex_simd::{encode_append, decode_append, AsciiCase};
 
 fn generate_random_data(size: usize) -> Vec<u8> {
@@ -32,11 +32,12 @@ fn should_run(target_name: &str) -> bool {
     if var == "all" {
         return true;
     }
-    var.to_lowercase().contains(&target_name.to_lowercase())
+    var.to_lowercase().eq(&target_name.to_lowercase())
 }
 
 fn bench_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Hex_Performances");
+
     // Logarithmic scaling is essential for viewing 32B vs 10MB
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
     group.measurement_time(Duration::from_secs(5));
@@ -44,21 +45,7 @@ fn bench_comparison(c: &mut Criterion) {
     group.noise_threshold(0.05);
     group.sample_size(50);
 
-    let sizes = [
-        16,
-        32,
-        64,
-        128,
-        256,
-        512,
-        1024, // 1KB
-        2 * 1024, // 2KB
-        4 * 1024, // 4KB (your sweet spot for cache delay)
-        8 * 1024, // 8KB
-        16 * 1024, // 16KB
-        32 * 1024, // 32KB
-        64 * 1024, // 64KB
-    ];
+    let sizes = [16, 32, 64, 128, 256, 512, 1024, 2 * 1024, 4 * 1024, 8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024];
 
     for size in sizes.iter() {
         let input_data = generate_random_data(*size);
@@ -68,12 +55,12 @@ fn bench_comparison(c: &mut Criterion) {
         // ======================================================================
         group.throughput(Throughput::Bytes(*size as u64));
 
-        // // 1a. Hex Turbo (Allocating)
-        // if should_run("turbo") {
-        //     group.bench_with_input(BenchmarkId::new("Encode/Turbo", size), &input_data, |b, d| {
-        //         b.iter(|| TURBO_ENGINE.encode(black_box(d)))
-        //     });
-        // }
+        // 1a. Hex Turbo (Allocating)
+        if should_run("turbo") {
+            group.bench_with_input(BenchmarkId::new("Encode/Turbo", size), &input_data, |b, d| {
+                b.iter(|| TURBO_ENGINE.encode(black_box(d)))
+            });
+        }
 
         // 1b. Hex Turbo (Buff / No-Alloc)
         if should_run("turbo-buff") {
@@ -108,7 +95,7 @@ fn bench_comparison(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("Encode/SimdBuff", size), &input_data, |b, d| {
                 b.iter(|| {
                     output_buffer.truncate(0);
-                    encode_append(black_box(d),black_box( &mut output_buffer), AsciiCase::Lower);
+                    encode_append(black_box(d), black_box(&mut output_buffer), black_box(AsciiCase::Lower));
                 })
             });
         }
@@ -116,18 +103,15 @@ fn bench_comparison(c: &mut Criterion) {
         // ======================================================================
         // DECODE
         // ======================================================================
-        // Prepare valid hex string for decoding (using the standard hex crate for consistency)
         let encoded_str = encode_std(&input_data);
-
-        // We measure throughput based on the INPUT text size (bytes processed per second)
         group.throughput(Throughput::Bytes(encoded_str.len() as u64));
 
-        // // 1a. Hex Turbo Decode (Allocating)
-        // if should_run("turbo") {
-        //     group.bench_with_input(BenchmarkId::new("Decode/Turbo", size), &encoded_str, |b, s| {
-        //         b.iter(|| TURBO_ENGINE.decode(black_box(s)).unwrap())
-        //     });
-        // }
+        // 1a. Hex Turbo Decode (Allocating)
+        if should_run("turbo") {
+            group.bench_with_input(BenchmarkId::new("Decode/Turbo", size), &encoded_str, |b, s| {
+                b.iter(|| TURBO_ENGINE.decode(black_box(s)).unwrap())
+            });
+        }
 
         // 1b. Hex Turbo Decode (Buff / No-Alloc)
         if should_run("turbo-buff") {
@@ -163,7 +147,7 @@ fn bench_comparison(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("Decode/SimdBuff", size), &encoded_str, |b, s| {
                 b.iter(|| {
                     output_buffer.truncate(0);
-                    decode_append(black_box(s), black_box(&mut output_buffer)).unwrap(); // decode_append returns Result on error
+                    decode_append(black_box(s), black_box(&mut output_buffer)).unwrap();
                 })
             });
         }

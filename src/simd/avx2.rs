@@ -1,12 +1,11 @@
 use crate::{Error, Config, scalar};
 
-// TODO: Rethink encoding and decoding logic. Could squeeze more performance.
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-// Duplicated 16-byte tables for AVX2 pshufb (both 128-bit lanes must contain the same data)
+// Duplicated 16-byte tables for AVX2 pshufb
 const HEX_TABLE_UPPER: [u8; 32] = [
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
     b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
@@ -220,6 +219,177 @@ pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Er
     Ok(())
 }
 
+#[cfg(kani)]
+mod kani_verification_avx2 {
+    use super::*;
+    use crate::Config;
+    use core::mem::transmute;
+
+    // Magic number: 32
+    const INPUT_LEN: usize = 32;
+
+    // --- HELPERS AND STUBS ---
+
+    // STUB: _mm256_shuffle_epi8
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_shuffle_epi8
+    #[allow(dead_code)]
+    unsafe fn mm256_shuffle_epi8_stub(a: __m256i, b: __m256i) -> __m256i {
+        let a: [u8; 32] = unsafe { transmute(a) };
+        let b: [u8; 32] = unsafe { transmute(b) };
+        let mut dst = [0u8; 32];
+
+        // FOR j := 0 to 15
+        for j in 0..16 {
+            // i := j*8
+            // (In Rust we access bytes 'j' so '*8' offset is not needed)
+            let i = j;
+
+            // IF b[i+7] == 1
+            if (b[i] & 0x80) != 0 {
+                // dst[i+7:i] := 0
+                dst[i] = 0;
+            } else {
+                // index[3:0] := b[i+3:i]
+                let index = b[i] & 0x0F;
+                // dst[i+7:i] := a[index*8+7:index*8]
+                dst[i] = a[index as usize];
+            }
+            // FI
+
+            // IF b[128+i+7] == 1
+            if (b[16 + i] & 0x80) != 0 {
+                // dst[128+i+7:128+i] := 0
+                dst[16 + i] = 0;
+            } else {
+                // index[3:0] := b[128+i+3:128+i]
+                let index = b[16 + i] & 0x0F;
+                // dst[128+i+7:128+i] := a[128+index*8+7:128+index*8]
+                dst[16 + i] = a[(16 + index) as usize];
+            }
+            // FI
+        }
+        // ENDFOR
+
+        // dst[MAX:256] := 0
+        // (__m256i is exactly 256 bits. There are no bits beyond 256 to zero out)
+
+        unsafe { transmute(dst) }
+    }
+
+    // STUB: _mm256_maddubs_epi16
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_maddubs_epi16
+    #[allow(dead_code)]
+    unsafe fn mm256_maddubs_epi16_stub(a: __m256i, b: __m256i) -> __m256i {
+        let a: [u8; 32] = unsafe { transmute(a) };
+        let b: [i8; 32] = unsafe { transmute(b) };
+        let mut dst = [0i16; 16];
+
+        // FOR j := 0 to 15
+        for j in 0..16 {
+            // i := j*16
+            let i = j * 2;
+
+            // dst[i+15:i] := Saturate16( a[i+15:i+8]*b[i+15:i+8] + a[i+7:i]*b[i+7:i] )
+            dst[j] = ((a[i+1] as i16) * (b[i+1] as i16)).saturating_add((a[i] as i16) * (b[i] as i16));
+        }
+        // ENDFOR
+
+        // dst[MAX:256] := 0
+
+        unsafe { transmute(dst) }
+    }
+
+    // STUB: _mm_packus_epi16
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm_packus_epi16
+    #[allow(dead_code)]
+    unsafe fn mm_packus_epi16_stub(a: __m128i, b: __m128i) -> __m128i {
+        let a: [i16; 8] = unsafe { transmute(a) };
+        let b: [i16; 8] = unsafe { transmute(b) };
+        let mut dst = [0u8; 16];
+
+        // dst[7:0] := SaturateU8(a[15:0])
+        dst[0] = a[0].max(0).min(255) as u8;
+        // dst[15:8] := SaturateU8(a[31:16])
+        dst[1] = a[1].max(0).min(255) as u8;
+        // dst[23:16] := SaturateU8(a[47:32])
+        dst[2] = a[2].max(0).min(255) as u8;
+        // dst[31:24] := SaturateU8(a[63:48])
+        dst[3] = a[3].max(0).min(255) as u8;
+        // dst[39:32] := SaturateU8(a[79:64])
+        dst[4] = a[4].max(0).min(255) as u8;
+        // dst[47:40] := SaturateU8(a[95:80])
+        dst[5] = a[5].max(0).min(255) as u8;
+        // dst[55:48] := SaturateU8(a[111:96])
+        dst[6] = a[6].max(0).min(255) as u8;
+        // dst[63:56] := SaturateU8(a[127:112])
+        dst[7] = a[7].max(0).min(255) as u8;
+        // dst[71:64] := SaturateU8(b[15:0])
+        dst[8] = b[0].max(0).min(255) as u8;
+        // dst[79:72] := SaturateU8(b[31:16])
+        dst[9] = b[1].max(0).min(255) as u8;
+        // dst[87:80] := SaturateU8(b[47:32])
+        dst[10] = b[2].max(0).min(255) as u8;
+        // dst[95:88] := SaturateU8(b[63:48])
+        dst[11] = b[3].max(0).min(255) as u8;
+        // dst[103:96] := SaturateU8(b[79:64])
+        dst[12] = b[4].max(0).min(255) as u8;
+        // dst[111:104] := SaturateU8(b[95:80])
+        dst[13] = b[5].max(0).min(255) as u8;
+        // dst[119:112] := SaturateU8(b[111:96])
+        dst[14] = b[6].max(0).min(255) as u8;
+        // dst[127:120] := SaturateU8(b[127:112])
+        dst[15] = b[7].max(0).min(255) as u8;
+
+        unsafe { transmute(dst) }
+    }
+
+    // -- REAL LOGIC --- 
+
+    #[kani::proof]
+    #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
+    #[kani::stub(_mm256_maddubs_epi16, mm256_maddubs_epi16_stub)]
+    #[kani::stub(_mm_packus_epi16, mm_packus_epi16_stub)]
+    fn check_roundtrip_safety() {
+        // Symbolic Config
+        let config = Config { uppercase: kani::any() };
+
+        // Symbolic Input
+        let input: [u8; INPUT_LEN] = kani::any();
+
+        // Setup Buffers
+        let mut enc_buf = [0u8; INPUT_LEN * 2];
+        let mut dec_buf = [0u8; INPUT_LEN];
+
+        unsafe {
+            // Encode
+            encode_slice_avx2(&config, &input, enc_buf.as_mut_ptr());
+
+            // Decode
+            decode_slice_avx2(&enc_buf, dec_buf.as_mut_ptr()).expect("Decoder failed");
+
+            // Verification
+            assert_eq!(&dec_buf, &input, "AVX2 Roundtrip Failed");
+        }
+    }
+
+    #[kani::proof]
+    #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
+    #[kani::stub(_mm256_maddubs_epi16, mm256_maddubs_epi16_stub)]
+    #[kani::stub(_mm_packus_epi16, mm_packus_epi16_stub)]
+    fn check_decoder_robustness() {
+        // Symbolic Input (Random Garbage)
+        let input: [u8; INPUT_LEN] = kani::any();
+
+        // Setup Buffer
+        let mut dec_buf = [0u8; 64];
+
+        unsafe {
+            // We verify what function NEVER panics/crashes
+            let _ = decode_slice_avx2(&input, dec_buf.as_mut_ptr());
+        }
+    }
+}
+
 #[cfg(all(test, miri))]
 mod avx2_miri_tests {
     use super::{encode_slice_avx2, decode_slice_avx2};
@@ -261,9 +431,7 @@ mod avx2_miri_tests {
         let ref_encode_fn: fn(Vec<u8>) -> String = if uppercase { ref_encode_upper } else { ref_encode_lower };
 
         // --- Deterministic boundary tests (hit all loop transitions) ---
-        let boundaries = [0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257];
-
-        for &len in &boundaries {
+        for len in 0..64 {
             let input = random_bytes(len);
             verify_roundtrip(&config, &input, ref_encode_fn);
         }
@@ -271,7 +439,7 @@ mod avx2_miri_tests {
         // --- Small random fuzz ---
         let mut rng = rng();
         for _ in 0..15 {
-            let len = rng.random_range(0..=512);
+            let len = rng.random_range(65..=512);
             let input = random_bytes(len);
             verify_roundtrip(&config, &input, ref_encode_fn);
         }
@@ -317,14 +485,14 @@ mod avx2_miri_tests {
     fn miri_avx2_decode_errors() {
         let mut out = vec![0u8; 128];
 
-        // Invalid character in SIMD-processed region
+        // Invalid character in middle region
         let mut invalid_simd = vec![b'0'; 64];
-        invalid_simd[15] = b'g'; // 'g' is invalid
+        invalid_simd[15] = b'g';
         let res = unsafe { decode_slice_avx2(&invalid_simd, out.as_mut_ptr()) };
         assert!(matches!(res, Err(Error::InvalidCharacter)));
 
-        // Force small length with invalid near end
-        let invalid_tail = b"00112233445566778899abcg"; // 26 chars (13 bytes) - processed by scalar/small loop
+        // Force small length with invalid char near end
+        let invalid_tail = b"00112233445566778899abcg";
         let res = unsafe { decode_slice_avx2(invalid_tail, out.as_mut_ptr()) };
         assert!(matches!(res, Err(Error::InvalidCharacter)));
     }
