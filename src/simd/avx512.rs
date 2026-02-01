@@ -5,6 +5,7 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+// Duplicated 16-byte tables for AVX512 pshufb (Encoding)
 const HEX_TABLE_UPPER: [u8; 64] = [
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
     b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
@@ -27,6 +28,26 @@ const HEX_TABLE_LOWER: [u8; 64] = [
     b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
 ];
 
+// Duplicated 16-byte LUTs and weights for AVX512 (Decoding)
+const LUT_HI: [u8; 64] = [
+    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
+const LUT_LO: [u8; 64] = [
+    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
+    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
+    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
+    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
+];
+const WEIGHTS: [u8; 64] = [
+    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
+    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
+    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
+    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
+];
+
 #[target_feature(enable = "avx512f,avx512bw")]
 pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u8) {
     let len = input.len();
@@ -36,12 +57,9 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
     // Select and load the appropriate 32-byte shuffle table
     let table_ptr = if config.uppercase { HEX_TABLE_UPPER.as_ptr() } else { HEX_TABLE_LOWER.as_ptr() };
     let table = unsafe { _mm512_loadu_si512(table_ptr as *const __m512i) };
-
     let mask_0f = _mm512_set1_epi8(0x0F);
 
-    // 2. Permutation Indices
-    // These shuffle 64-bit blocks to restore linear order from the 128-bit interleaved lanes.
-    // Indices 0-7 refer to 'inter_lo', 8-15 refer to 'inter_hi'.
+    // Permutation Indices
     let perm_idx_1 = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
     let perm_idx_2 = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
 
@@ -97,26 +115,6 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
     }
 }
 
-// Duplicated 64-byte LUTs and weights for AVX512
-const LUT_HI: [u8; 64] = [
-    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
-const LUT_LO: [u8; 64] = [
-    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
-    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
-    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
-    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
-];
-const WEIGHTS: [u8; 64] = [
-    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
-    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
-    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
-    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
-];
-
 #[target_feature(enable = "avx512f,avx512bw")]
 pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), Error> {
     let len = input.len();
@@ -132,30 +130,24 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
 
     macro_rules! decode_hex_vec {
         ($input:expr) => {{
-            // 1. Split Nibbles
+            // Split Nibbles
             let lo = _mm512_and_si512($input, mask_0f);
             let hi = _mm512_and_si512(_mm512_srli_epi16($input, 4), mask_0f);
 
-            // 2. LUT Lookups (Shuffle)
+            // LUT Lookups
             let hi_props = _mm512_shuffle_epi8(lut_hi, hi);
             let lo_props = _mm512_shuffle_epi8(lut_lo, lo);
 
-            // 3. Validation
-            // Combine properties. If valid, result != 0.
+            // Validation
             let valid_flags = _mm512_and_si512(hi_props, lo_props);
-            // Compare with zero to find errors. Returns a bitmask (1 = error).
             let err_mask = _mm512_cmpeq_epi8_mask(valid_flags, zero);
 
-            // 4. Value Calculation
+            // Value Calculation
             let offset = _mm512_and_si512(hi_props, mask_0f);
             let nibbles = _mm512_add_epi8(lo, offset);
 
             // 5. Pack to Bytes
-            // maddubs computes: High*16 + Low*1. Result is 32x i16 integers in a 512-bit register.
             let pairs_i16 = _mm512_maddubs_epi16(nibbles, weights);
-            
-            // Convert packed 16-bit integers to packed 8-bit integers.
-            // Input: 512-bit (32 x i16). Output: 256-bit (32 x i8).
             let result_256 = _mm512_cvtepi16_epi8(pairs_i16);
 
             (result_256, err_mask)
@@ -163,7 +155,6 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
     }
 
     // --- Large unrolled loop: 256 input bytes (128 output bytes) ---
-    // We process 4 vectors of 64 bytes each.
     let limit_256 = (len / 256) * 256;
     let src_end_256 = unsafe { input.as_ptr().add(limit_256) };
 
@@ -195,7 +186,6 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
     }
 
     // --- Small loop: 64 input bytes (32 output bytes) ---
-    // Process remaining full AVX-512 vectors.
     let safe_len = len.saturating_sub(63);
     let src_end = unsafe { input.as_ptr().add(safe_len) };
 
@@ -221,4 +211,162 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
     }
 
     Ok(())
+}
+
+#[cfg(kani)]
+mod kani_verification_avx512 {
+    use super::*;
+    use crate::Config;
+    use core::mem::transmute;
+
+    const INPUT_LEN: usize = 65;
+
+    // --- HELPERS AND STUBS ---
+
+    // STUB: _mm512_shuffle_epi8
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_shuffle_epi8
+    #[allow(dead_code)]
+    unsafe fn mm512_shuffle_epi8_stub(a: __m512i, b: __m512i) -> __m512i {
+        let a: [u8; 64] = unsafe { transmute(a) };
+        let b: [u8; 64] = unsafe { transmute(b) };
+        let mut dst = [0u8; 64];
+
+        // FOR j := 0 to 63
+        for j in 0..64 {
+            // i := j*8
+            // (In Rust we access bytes 'j' so '*8' offset is not needed)
+            let i = j;
+
+            // IF b[i+7] == 1
+            if (b[i] & 0x80) != 0 {
+                // dst[i+7:i] := 0
+                dst[i] = 0;
+            // ELSE
+            } else {
+                // index[5:0] := b[i+3:i] + (j & 0x30)
+                let index: u8 = (b[i] & 0x0F) + (j as u8 & 0x30);
+                // dst[i+7:i] := a[index*8+7:index*8]
+                dst[i] = a[index as usize];
+            // FI
+            }
+        // ENDFOR
+        }
+        // dst[MAX:512] := 0
+        // (No extra bits beyond 512 in __m512i)
+
+        unsafe { transmute(dst) }
+    }
+
+    // STUB: _mm512_permutex2var_epi64
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_permutex2var_epi64
+    #[allow(dead_code)]
+    unsafe fn mm512_permutex2var_epi64_stub(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
+        let a: [u64; 8] = unsafe { transmute(a) };
+        let idx: [u64; 8] = unsafe { transmute(idx) };
+        let b: [u64; 8] = unsafe { transmute(b) };
+        let mut dst = [0u64; 8];
+
+        // FOR j := 0 to 7
+        for j in 0..8 {
+            // i := j*64
+            let i = j;
+            // off := idx[i+2:i]*64
+            let off = (idx[i] & 0x7) as usize;
+            // dst[i+63:i] := idx[i+3] ? b[off+63:off] : a[off+63:off]
+            dst[i] = if (idx[i] >> 3) & 1 != 0 { b[off] } else { a[off] };
+        // ENDFOR
+        }
+        // dst[MAX:512] := 0
+
+        unsafe { transmute(dst) }
+    }
+
+    // STUB: _mm512_maddubs_epi16
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_maddubs_epi16
+    #[allow(dead_code)]
+    unsafe fn mm512_maddubs_epi16_stub(a: __m512i, b: __m512i) -> __m512i {
+        let a: [u8; 64] = unsafe { transmute(a) };
+        let b: [i8; 64] = unsafe { transmute(b) };
+        let mut dst = [0i16; 32];
+
+        // FOR j := 0 to 31
+        for j in 0..32 {
+            // i := j*16
+            let i = j * 2;
+            // dst[i+15:i] := Saturate16( a[i+15:i+8]*b[i+15:i+8] + a[i+7:i]*b[i+7:i] )
+            dst[j] = ((a[i+1] as i16) * (b[i+1] as i16)).saturating_add((a[i] as i16) * (b[i] as i16));
+        // ENDFOR
+        }
+        // dst[MAX:512] := 0
+
+        unsafe { transmute(dst) }
+    }
+
+    // STUB: _mm512_cvtepi16_epi8
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_cvtepi16_epi8
+    #[allow(dead_code)]
+    unsafe fn mm512_cvtepi16_epi8_stub(a: __m512i) -> __m256i {
+        let a: [u16; 32] = unsafe { transmute(a) };
+        let mut dst = [0u8; 32];
+
+        // FOR j := 0 to 31
+        for j in 0..32 {
+            // i := 16*j
+            let i = j;
+            // l := 8*j
+            let l = j;
+            // dst[l+7:l] := Truncate8(a[i+15:i])
+            dst[l] = a[i] as u8;
+        // ENDFOR
+        }
+        // dst[MAX:256] := 0
+
+        unsafe { transmute(dst) }
+    }
+
+    // -- REAL LOGIC --- 
+
+    #[kani::proof]
+    #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]
+    #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
+    #[kani::stub(_mm512_maddubs_epi16, mm512_maddubs_epi16_stub)]
+    #[kani::stub(_mm512_cvtepi16_epi8, mm512_cvtepi16_epi8_stub)]
+    fn check_roundtrip_safety() {
+        // Symbolic Config
+        let config = Config { uppercase: kani::any() };
+
+        // Symbolic Input
+        let input: [u8; INPUT_LEN] = kani::any();
+
+        // Setup Buffers
+        let mut enc_buf = [0u8; INPUT_LEN * 2];
+        let mut dec_buf = [0u8; INPUT_LEN];
+
+        unsafe {
+            // Encode
+            encode_slice_avx512(&config, &input, enc_buf.as_mut_ptr());
+
+            // Decode
+            decode_slice_avx512(&enc_buf, dec_buf.as_mut_ptr()).expect("Decoder failed");
+
+            // Verification
+            assert_eq!(&dec_buf, &input, "AVX2 Roundtrip Failed");
+        }
+    }
+
+    #[kani::proof]
+    #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]
+    #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
+    fn check_decoder_robustness() {
+        // Symbolic Input (Random Garbage)
+        let input: [u8; INPUT_LEN] = kani::any();
+
+        // Setup Buffer
+        let mut dec_buf = [0u8; INPUT_LEN * 2];
+
+        unsafe {
+            // We verify what function NEVER panics/crashes
+            let _ = decode_slice_avx512(&input, dec_buf.as_mut_ptr());
+        }
+    }
 }

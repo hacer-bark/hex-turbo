@@ -149,3 +149,51 @@ pub unsafe fn decode_slice_unsafe(input: &[u8], mut dst: *mut u8) -> Result<(), 
         Ok(())
     }
 }
+
+#[cfg(kani)]
+mod kani_verification_scalar {
+    use super::*;
+    use crate::Config;
+
+    const INPUT_LEN: usize = 17;
+
+    // -- REAL LOGIC --- 
+
+    #[kani::proof]
+    fn check_roundtrip_safety() {
+        // Symbolic Config
+        let config = Config { uppercase: kani::any() };
+
+        // Symbolic Input
+        let input: [u8; INPUT_LEN] = kani::any();
+
+        // Setup Buffers
+        let mut enc_buf = [0u8; INPUT_LEN * 2];
+        let mut dec_buf = [0u8; INPUT_LEN];
+
+        unsafe {
+            // Encode
+            encode_slice_unsafe(&config, &input, enc_buf.as_mut_ptr());
+
+            // Decode
+            decode_slice_unsafe(&enc_buf, dec_buf.as_mut_ptr()).expect("Decoder failed");
+
+            // Verification
+            assert_eq!(&dec_buf, &input, "AVX2 Roundtrip Failed");
+        }
+    }
+
+    #[kani::proof]
+    fn check_decoder_robustness() {
+        // Symbolic Input (Random Garbage)
+        let input: [u8; INPUT_LEN] = kani::any();
+
+        // Setup Buffer
+        let mut dec_buf = [0u8; 64];
+
+        unsafe {
+            // We verify what function NEVER panics/crashes
+            let _ = decode_slice_unsafe(&input, dec_buf.as_mut_ptr());
+        }
+    }
+}

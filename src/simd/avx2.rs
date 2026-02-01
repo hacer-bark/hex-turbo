@@ -225,8 +225,7 @@ mod kani_verification_avx2 {
     use crate::Config;
     use core::mem::transmute;
 
-    // Magic number: 32
-    const INPUT_LEN: usize = 32;
+    const INPUT_LEN: usize = 33;
 
     // --- HELPERS AND STUBS ---
 
@@ -381,7 +380,7 @@ mod kani_verification_avx2 {
         let input: [u8; INPUT_LEN] = kani::any();
 
         // Setup Buffer
-        let mut dec_buf = [0u8; 64];
+        let mut dec_buf = [0u8; INPUT_LEN * 2];
 
         unsafe {
             // We verify what function NEVER panics/crashes
