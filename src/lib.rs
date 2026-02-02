@@ -1,7 +1,91 @@
+//! # Hex Turbo
+//!
+//! [![Crates.io](https://img.shields.io/crates/v/base64-turbo.svg)](https://crates.io/crates/base64-turbo)
+//! [![Documentation](https://docs.rs/base64-turbo/badge.svg)](https://docs.rs/base64-turbo)
+//! [![License](https://img.shields.io/github/license/hacer-bark/base64-turbo)](https://github.com/hacer-bark/base64-turbo/blob/main/LICENSE)
+//! [![Kani Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/base64-turbo/verification.yml?label=Kani%20Verified)](https://github.com/hacer-bark/base64-turbo/actions/workflows/verification.yml)
+//! [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/base64-turbo/miri.yml?label=MIRI%20Verified)](https://github.com/hacer-bark/base64-turbo/actions/workflows/miri.yml)
+//! [![Logic Tests](https://img.shields.io/github/actions/workflow/status/hacer-bark/base64-turbo/tests.yml?label=Logic%20Tests)](https://github.com/hacer-bark/base64-turbo/actions/workflows/tests.yml)
+//!
+//! A SIMD-accelerated Hex encoder/decoder for Rust, optimized for high-throughput systems.
+//!
+//! This crate provides runtime CPU detection to utilize AVX2, SSE4.1, or AVX512 intrinsics.
+//! It includes a highly optimized scalar fallback for non-SIMD targets and supports `no_std` environments.
+//!
+//! ## Usage
+//!
+//! Add this to your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! base64-turbo = "0.1"
+//! ```
+//!
+//! ### Basic API (Allocating)
+//!
+//! Standard usage for general applications. Requires the `std` feature (enabled by default).
+//!
+//! ```rust
+//! # #[cfg(feature = "std")]
+//! # {
+//! use base64_turbo::STANDARD;
+//!
+//! let data = b"Hello world";
+//!
+//! // Encode to String
+//! let encoded = STANDARD.encode(data);
+//! assert_eq!(encoded, "SGVsbG8gd29ybGQ=");
+//!
+//! // Decode to Vec<u8>
+//! let decoded = STANDARD.decode(&encoded).unwrap();
+//! assert_eq!(decoded, data);
+//! # }
+//! ```
+//!
+//! ### Zero-Allocation API (Slice-based)
+//!
+//! For low-latency scenarios or `no_std` environments where heap allocation is undesirable.
+//! These methods write directly into a user-provided mutable slice.
+//!
+//! ```rust
+//! use base64_turbo::STANDARD;
+//!
+//! let input = b"Raw bytes";
+//! let mut output = [0u8; 64]; // Pre-allocated stack buffer
+//!
+//! // Returns Result<usize, Error> indicating bytes written
+//! let len = STANDARD.encode_into(input, &mut output).unwrap();
+//!
+//! assert_eq!(&output[..len], b"UmF3IGJ5dGVz");
+//! ```
+//!
+//! ## Feature Flags
+//!
+//! This crate is highly configurable via Cargo features:
+//!
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | **`std`** | **Yes** | Enables `String` and `Vec` support. Disable this for `no_std` environments. |
+//! | **`simd`** | **Yes** | Enables runtime detection for AVX2 and SSE4.1 intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic automatic. |
+//! | **`parallel`** | **No** | Enables [Rayon](https://crates.io/crates/rayon) support. Automatically parallelizes processing for payloads larger than 512KB. Recommended only for massive data ingestion tasks. |
+//! | **`avx512`** | **No** | Enables AVX512 intrinsics. |
+//! | **`unstable`** | **No** | Enables access to the raw, unsafe functions. |
+//!
+//! ## Safety & Verification
+//!
+//! This crate utilizes `unsafe` code for SIMD intrinsics and pointer arithmetic to achieve maximum performance.
+//!
+//! *   **Formal Verification (Kani):** Scalar (Done), SSE4.1 (In Progress), AVX2 (Done), AVX512 (In Progress) code mathematic proven to be UB free and panic free.
+//! *   **MIRI Tests:** Core SIMD logic and scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI.
+//! *   **Fuzzing:** The codebase is fuzz-tested via `cargo-fuzz`.
+//! *   **Fallback:** Invalid or unsupported hardware instruction sets are detected at runtime, ensuring safe fallback to scalar code.
+//! 
+//! **[Learn More](https://github.com/hacer-bark/base64-turbo/blob/main/docs/verification.md)**: Details on our threat model and formal verification strategy.
+
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![doc(issue_tracker_base_url = "https://github.com/hacer-bark/hex-turbo/issues/")]
 #![deny(unsafe_op_in_unsafe_fn)]
-// #![warn(missing_docs)]
+#![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
 #![warn(unused_qualifications)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -60,7 +144,7 @@ impl std::error::Error for Error {}
 // Configuration & Types
 // ======================================================================
 
-/// Internal configuration for the Base64 engine.
+/// Internal configuration for the Hex engine.
 ///
 /// This struct uses `repr(C)` to ensure predictable memory layout.
 #[repr(C)]
@@ -69,6 +153,29 @@ pub(crate) struct Config {
     pub uppercase: bool,
 }
 
+/// A high-performance, stateless Hex encoder/decoder.
+/// 
+/// This struct holds the configuration for encoding/decoding.
+/// It is designed to be immutable and thread-safe.
+/// 
+/// # Examples
+/// 
+/// ```rust
+/// # #[cfg(feature = "std")]
+/// # {
+/// use hex_turbo::LOWER_CASE;
+/// 
+/// let data = b"Hello world";
+/// 
+/// // Encode to String
+/// let encoded = LOWER_CASE.encode(data);
+/// assert_eq!(encoded, "48656c6c6f20776f726c64");
+/// 
+/// // Decode to Result<Vec<u8>, Error>
+/// let decoded = LOWER_CASE.decode(&encoded).unwrap();
+/// assert_eq!(decoded, data);
+/// # }
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Engine {
     pub(crate) config: Config,
@@ -78,16 +185,14 @@ pub struct Engine {
 // Pre-defined Engines
 // ======================================================================
 
+/// Hex encoder with RFC4648 Alphabet, **UPPER CASE**.
 pub const UPPER_CASE: Engine = Engine {
-    config: Config {
-        uppercase: true,
-    },
+    config: Config { uppercase: true },
 };
 
+/// Hex encoder with RFC4648 Alphabet, **LOWER CASE**.
 pub const LOWER_CASE: Engine = Engine {
-    config: Config {
-        uppercase: false,
-    },
+    config: Config { uppercase: false },
 };
 
 impl Engine {
@@ -96,29 +201,32 @@ impl Engine {
     // ======================================================================
 
     /// Calculates the exact buffer size required to encode `input_len` bytes.
-    ///
-    /// This method computes the size based on the current configuration (padding vs. no padding).
-    ///
+    /// 
+    /// This method computes the size of encoded data.
+    /// 
     /// # Examples
-    ///
+    /// 
     /// ```
-    /// use base64_turbo::STANDARD;
-    ///
-    /// assert_eq!(STANDARD.encoded_len(3), 4);
-    /// assert_eq!(STANDARD.encoded_len(1), 4); // With padding
+    /// use hex_turbo::LOWER_CASE;
+    /// 
+    /// assert_eq!(LOWER_CASE.encoded_len(3), 6);
+    /// assert_eq!(LOWER_CASE.encoded_len(2), 4);
     /// ```
     #[inline]
     #[must_use]
     pub const fn encoded_len(&self, input_len: usize) -> usize { input_len * 2 }
 
-    /// Calculates the **maximum** buffer size required to decode `input_len` bytes.
-    ///
-    /// # Note
-    /// This is an upper-bound estimate. The actual number of bytes written during
-    /// decoding will likely be smaller.
-    ///
-    /// You should rely on the `usize` returned by [`decode_into`](Self::decode_into)
-    /// to determine the actual valid slice of the output buffer.
+    /// Calculates the **exact** buffer size required to decode `input_len` bytes.
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use hex_turbo::LOWER_CASE;
+    /// 
+    /// assert_eq!(LOWER_CASE.decoded_len(6), 3);
+    /// assert_eq!(LOWER_CASE.decoded_len(4), 2);
+    /// ```
+    // TODO: MUST CHECK INPUT WHICH NOT DIVISIBLE BY 2!
     #[inline]
     #[must_use]
     pub const fn decoded_len(&self, input_len: usize) -> usize { input_len / 2 }
@@ -128,24 +236,35 @@ impl Engine {
     // ======================================================================
 
     /// Encodes `input` into the provided `output` buffer.
-    ///
+    /// 
     /// This is a "Zero-Allocation" API designed for hot paths. It writes directly
     /// into the destination slice without creating intermediate `Vec`.
-    ///
-    /// # Parallelism
-    /// If the `parallel` feature is enabled and the input size exceeds the
-    /// internal threshold (default: 512KB), this method automatically uses
-    /// Rayon to process chunks in parallel, saturating memory bandwidth.
-    ///
+    /// 
     /// # Arguments
-    ///
+    /// 
     /// * `input`: The binary data to encode.
     /// * `output`: A mutable slice to write the Base64 string into.
-    ///
+    /// 
     /// # Returns
-    ///
-    /// * `Ok(usize)`: The actual number of bytes written to `output`.
+    /// 
+    /// * `Ok(usize)`: The number of bytes written to `output`.
     /// * `Err(Error::BufferTooSmall)`: If `output.len()` is less than [`encoded_len`](Self::encoded_len).
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// # #[cfg(feature = "std")]
+    /// # {
+    /// use hex_turbo::LOWER_CASE;
+    /// 
+    /// let data = b"Hello world";
+    /// let mut buff = vec![0u8; LOWER_CASE.encoded_len(data.len())];
+    /// 
+    /// // Encode to Result<usize, Error>
+    /// LOWER_CASE.encode_into(data, &mut buff).unwrap();
+    /// assert_eq!(buff, b"48656c6c6f20776f726c64");
+    /// # }
+    /// ```
     #[inline]
     pub fn encode_into<T: AsRef<[u8]> + Sync>(
         &self,
@@ -155,16 +274,11 @@ impl Engine {
         let input = input.as_ref();
         let len = input.len();
 
-        if len == 0 {
-            return Ok(0);
-        }
+        if len == 0 { return Ok(0); }
 
         let req_len = Self::encoded_len(self, len);
-        if output.len() < req_len {
-            return Err(Error::BufferTooSmall);
-        }
+        if output.len() < req_len { return Err(Error::BufferTooSmall); }
 
-        // --- Serial Path ---
         // Pass the raw pointer to the dispatcher. 
         // SAFETY: We checked output.len() >= req_len above.
         unsafe { Self::encode_dispatch(self, input, output[..req_len].as_mut_ptr()) };
@@ -174,14 +288,31 @@ impl Engine {
 
     /// Decodes `input` into the provided `output` buffer.
     ///
-    /// # Performance
-    /// Like encoding, this method supports automatic parallelization for large payloads.
-    /// It verifies the validity of the Base64 input while decoding.
-    ///
     /// # Returns
     ///
-    /// * `Ok(usize)`: The actual number of bytes written to `output`.
+    /// * `Ok(usize)`: The number of bytes written to `output`.
     /// * `Err(Error)`: If the input is invalid or the buffer is too small.
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// # #[cfg(feature = "std")]
+    /// # {
+    /// use hex_turbo::LOWER_CASE;
+    /// 
+    /// let data = b"Hello world";
+    /// 
+    /// // Encode to String
+    /// let encoded = LOWER_CASE.encode(data);
+    /// assert_eq!(encoded, "48656c6c6f20776f726c64");
+    /// 
+    /// let mut buff = vec![0u8; LOWER_CASE.decoded_len(encoded.len())];
+    /// 
+    /// // Decode to Result<usize, Error>
+    /// LOWER_CASE.decode_into(&encoded, &mut buff).unwrap();
+    /// assert_eq!(buff, data);
+    /// # }
+    /// ```
     #[inline]
     pub fn decode_into<T: AsRef<[u8]> + Sync>(
         &self,
@@ -191,16 +322,12 @@ impl Engine {
         let input = input.as_ref();
         let len = input.len();
 
-        if len == 0 {
-            return Ok(0);
-        }
+        if len == 0 { return Ok(0); }
+        if len % 2 != 0 { return Err(Error::InvalidLength); }
 
         let req_len = Self::decoded_len(self, len);
-        if output.len() < req_len {
-            return Err(Error::BufferTooSmall);
-        }
+        if output.len() < req_len { return Err(Error::BufferTooSmall); }
 
-        // --- Serial Path ---
         // SAFETY: We pass only verified data.
         unsafe { Self::decode_dispatch(self, input, output[..req_len].as_mut_ptr())? };
 
@@ -218,9 +345,9 @@ impl Engine {
     /// # Examples
     ///
     /// ```
-    /// use base64_turbo::STANDARD;
-    /// let b64 = STANDARD.encode(b"hello");
-    /// assert_eq!(b64, "aGVsbG8=");
+    /// use hex_turbo::LOWER_CASE;
+    /// let hex = LOWER_CASE.encode(b"hello");
+    /// assert_eq!(hex, "68656c6c6f");
     /// ```
     #[inline]
     #[cfg(feature = "std")]
@@ -259,8 +386,8 @@ impl Engine {
     /// # Examples
     ///
     /// ```
-    /// use base64_turbo::STANDARD;
-    /// let bytes = STANDARD.decode("aGVsbG8=").unwrap();
+    /// use hex_turbo::LOWER_CASE;
+    /// let bytes = LOWER_CASE.decode("68656c6c6f").unwrap();
     /// assert_eq!(bytes, b"hello");
     /// ```
     #[inline]
@@ -311,7 +438,6 @@ impl Engine {
         {
             let len = input.len();
 
-            #[cfg(feature = "avx512")]
             // Smart degrade: If len < 64, don't bother checking AVX512 features or setting up ZMM register
             if len >= 64 
                 && std::is_x86_feature_detected!("avx512f") 
@@ -346,7 +472,6 @@ impl Engine {
         {
             let len = input.len();
 
-            #[cfg(feature = "avx512")]
             // Smart degrade: Don't enter AVX512 path if we don't have a full vector of input.
             if len >= 64 
                 && std::is_x86_feature_detected!("avx512f") 

@@ -5,7 +5,9 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-// Duplicated 16-byte tables for AVX2 pshufb
+// --- CONSTANTS ---
+
+// Duplicated 16-byte tables for AVX2 pshufb (Encoding)
 const HEX_TABLE_UPPER: [u8; 32] = [
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
     b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
@@ -20,7 +22,7 @@ const HEX_TABLE_LOWER: [u8; 32] = [
     b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
 ];
 
-// Duplicated 32-byte LUTs and weights for AVX2
+// Duplicated 16-byte LUTs and weights for AVX2 (Decoding)
 const LUT_HI: [u8; 32] = [
     0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,

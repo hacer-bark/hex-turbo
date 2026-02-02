@@ -30,6 +30,8 @@ pub unsafe fn encode_slice_unsafe(config: &Config, input: &[u8], mut dst: *mut u
     let len = input.len();
     let mut src = input.as_ptr();
 
+    if len == 0 { return; }
+
     let alphabet = if config.uppercase {
         &UPPER_ALPHABET
     } else {

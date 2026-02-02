@@ -5,6 +5,8 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+// --- CONSTANTS ---
+
 // Duplicated 16-byte tables for AVX512 pshufb (Encoding)
 const HEX_TABLE_UPPER: [u8; 64] = [
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
@@ -48,6 +50,8 @@ const WEIGHTS: [u8; 64] = [
     16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
 ];
 
+// --- STUBS ---
+
 // STUB: _mm512_permutex2var_epi64
 // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_permutex2var_epi64
 #[cfg(all(miri, test))]
@@ -79,6 +83,8 @@ fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
 fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
     _mm512_permutex2var_epi64(a, idx, b)
 }
+
+// --- REAL CODE ---
 
 #[target_feature(enable = "avx512f,avx512bw")]
 pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u8) {
@@ -245,6 +251,8 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
     Ok(())
 }
 
+// --- KANI (FORMAL VERIFICATION) ---
+
 #[cfg(kani)]
 mod kani_verification_avx512 {
     use super::*;
@@ -252,7 +260,7 @@ mod kani_verification_avx512 {
 
     const INPUT_LEN: usize = 65;
 
-    // --- HELPERS AND STUBS ---
+    // --- KANI STUBS ---
 
     // STUB: _mm512_shuffle_epi8
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_shuffle_epi8
@@ -355,7 +363,7 @@ mod kani_verification_avx512 {
         unsafe { transmute(dst) }
     }
 
-    // -- REAL LOGIC --- 
+    // -- REAL TESTS --- 
 
     #[kani::proof]
     #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]
@@ -401,6 +409,8 @@ mod kani_verification_avx512 {
         }
     }
 }
+
+// --- MIRI (FORMAL VERIFICATION) ---
 
 #[cfg(all(test, miri))]
 mod avx512_miri_tests {

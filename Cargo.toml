@@ -7,10 +7,9 @@ readme = "README.md"
 authors = ["Hacer"]
 
 [features]
-default = ["std", "simd", "avx512"]
+default = ["std", "simd"]
 std = []
 simd = ["std"]
-avx512 = ["std", "simd"]
 
 [dev-dependencies]
 rand = "0.9"
