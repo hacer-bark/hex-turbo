@@ -48,6 +48,38 @@ const WEIGHTS: [u8; 64] = [
     16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
 ];
 
+// STUB: _mm512_permutex2var_epi64
+// REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_permutex2var_epi64
+#[cfg(all(miri, test))]
+fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
+    use core::mem::transmute;
+
+    let a: [u64; 8] = unsafe { transmute(a) };
+    let idx: [u64; 8] = unsafe { transmute(idx) };
+    let b: [u64; 8] = unsafe { transmute(b) };
+    let mut dst = [0u64; 8];
+
+    // FOR j := 0 to 7
+    for j in 0..8 {
+        // i := j*64
+        let i = j;
+        // off := idx[i+2:i]*64
+        let off = (idx[i] & 0x7) as usize;
+        // dst[i+63:i] := idx[i+3] ? b[off+63:off] : a[off+63:off]
+        dst[i] = if (idx[i] >> 3) & 1 != 0 { b[off] } else { a[off] };
+    // ENDFOR
+    }
+    // dst[MAX:512] := 0
+
+    unsafe { transmute(dst) }
+}
+
+#[cfg(not(all(miri, test)))]
+#[target_feature(enable = "avx512f,avx512bw")]
+fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
+    _mm512_permutex2var_epi64(a, idx, b)
+}
+
 #[target_feature(enable = "avx512f,avx512bw")]
 pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u8) {
     let len = input.len();
@@ -84,8 +116,8 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
     macro_rules! store_128_bytes {
         ($dst:expr, $inter_lo:expr, $inter_hi:expr) => {{
             // Reorder the data using the permutation indices
-            let ordered_1 = _mm512_permutex2var_epi64($inter_lo, perm_idx_1, $inter_hi);
-            let ordered_2 = _mm512_permutex2var_epi64($inter_lo, perm_idx_2, $inter_hi);
+            let ordered_1 = mm512_permutex2var_epi64($inter_lo, perm_idx_1, $inter_hi);
+            let ordered_2 = mm512_permutex2var_epi64($inter_lo, perm_idx_2, $inter_hi);
 
             unsafe {
                 _mm512_storeu_si512($dst as *mut _, ordered_1);
@@ -217,7 +249,6 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
 mod kani_verification_avx512 {
     use super::*;
     use crate::Config;
-    use core::mem::transmute;
 
     const INPUT_LEN: usize = 65;
 
@@ -368,5 +399,111 @@ mod kani_verification_avx512 {
             // We verify what function NEVER panics/crashes
             let _ = decode_slice_avx512(&input, dec_buf.as_mut_ptr());
         }
+    }
+}
+
+#[cfg(all(test, miri))]
+mod avx512_miri_tests {
+    use super::{encode_slice_avx512, decode_slice_avx512};
+    use crate::{Config, Error};
+
+    // Reference crate (hex crate: lowercase encode, case-insensitive decode)
+    use hex::{encode as ref_encode_lower, encode_upper as ref_encode_upper};
+
+    use rand::{rng, Rng};
+
+    // --- Helpers ---
+    fn random_bytes(len: usize) -> Vec<u8> {
+        let mut rng = rng();
+        (0..len).map(|_| rng.random()).collect()
+    }
+
+    fn verify_roundtrip(config: &Config, input: &[u8], ref_encode: fn(Vec<u8>) -> String) {
+        let len = input.len();
+
+        // --- Encoding ---
+        let expected = ref_encode(input.to_vec());
+
+        let mut enc_buf = vec![0u8; len * 2];
+        unsafe { encode_slice_avx512(config, input, enc_buf.as_mut_ptr()); }
+
+        assert_eq!(&enc_buf[..], expected.as_bytes(), "AVX2 Encoding mismatch (len={})", len);
+
+        // --- Decoding (own output) ---
+        let mut dec_buf = vec![0u8; len];
+        unsafe { decode_slice_avx512(&enc_buf, dec_buf.as_mut_ptr()).expect("AVX2 decoder failed on valid own output") };
+
+        assert_eq!(&dec_buf[..], input, "AVX2 round-trip failed (len={})", len);
+    }
+
+    fn run_avx2_tests(uppercase: bool) {
+        let config = Config { uppercase };
+        let ref_encode_fn: fn(Vec<u8>) -> String = if uppercase { ref_encode_upper } else { ref_encode_lower };
+
+        // --- Deterministic boundary tests (hit all loop transitions) ---
+        for len in 64..128 {
+            let input = random_bytes(len);
+            verify_roundtrip(&config, &input, ref_encode_fn);
+        }
+
+        // --- Small random fuzz ---
+        let mut rng = rng();
+        for _ in 0..15 {
+            let len = rng.random_range(0..=512);
+            let input = random_bytes(len);
+            verify_roundtrip(&config, &input, ref_encode_fn);
+        }
+    }
+
+    // --- Tests ---
+
+    #[test]
+    fn miri_avx2_lower_roundtrip() {
+        run_avx2_tests(false);
+    }
+
+    #[test]
+    fn miri_avx2_upper_roundtrip() {
+        run_avx2_tests(true);
+    }
+
+    #[test]
+    fn miri_avx2_decode_mixed_case() {
+        let mut rng = rng();
+        for _ in 0..5 {
+            let original_len = rng.random_range(1..=256);
+            let input = random_bytes(original_len);
+
+            // Start from valid lowercase encoding
+            let mut hex_chars = ref_encode_lower(&input).into_bytes();
+
+            // Randomly convert some chars to uppercase
+            for b in &mut hex_chars {
+                if rng.random_bool(0.5) {
+                    *b = b.to_ascii_uppercase();
+                }
+            }
+
+            let mut dec_buf = vec![0u8; original_len];
+            unsafe { decode_slice_avx512(&hex_chars, dec_buf.as_mut_ptr()).expect("AVX2 decoder failed on valid mixed-case input") };
+
+            assert_eq!(&dec_buf[..], input);
+        }
+    }
+
+    #[test]
+    fn miri_avx2_decode_errors() {
+        let mut out = vec![0u8; 128];
+
+        // Invalid character in middle region
+        let mut invalid_simd = vec![b'0'; 64];
+        invalid_simd[15] = b'g';
+        let res = unsafe { decode_slice_avx512(&invalid_simd, out.as_mut_ptr()) };
+        assert!(matches!(res, Err(Error::InvalidCharacter)));
+
+        // Force small length with invalid char near end
+        let invalid_tail = b"00112233445566778899abcg";
+        let res = unsafe { decode_slice_avx512(invalid_tail, out.as_mut_ptr()) };
+        assert!(matches!(res, Err(Error::InvalidCharacter)));
     }
 }
