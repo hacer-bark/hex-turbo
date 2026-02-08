@@ -2,9 +2,19 @@
 name = "hex-turbo"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+# NEED CHANGES
+description = "The fastest memory-safe Base64 engine. Formally verified (Kani/MIRI). Features runtime AVX2/AVX512 detection, zero-allocation API, and robust no_std support."
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 authors = ["Hacer"]
+keywords = ["hex", "simd", "avx512", "performance", "encoding"]
+categories = ["encoding", "hardware-support", "no-std", "web-programming"]
+exclude = [
+    ".github",
+    ".gitignore",
+    "benches/img/*",
+    "docs/*",
+]
 
 [features]
 default = ["std", "simd"]

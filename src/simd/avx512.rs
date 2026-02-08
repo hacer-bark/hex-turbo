@@ -50,41 +50,7 @@ const WEIGHTS: [u8; 64] = [
     16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
 ];
 
-// --- STUBS ---
-
-// STUB: _mm512_permutex2var_epi64
-// REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_permutex2var_epi64
-#[cfg(all(miri, test))]
-fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
-    use core::mem::transmute;
-
-    let a: [u64; 8] = unsafe { transmute(a) };
-    let idx: [u64; 8] = unsafe { transmute(idx) };
-    let b: [u64; 8] = unsafe { transmute(b) };
-    let mut dst = [0u64; 8];
-
-    // FOR j := 0 to 7
-    for j in 0..8 {
-        // i := j*64
-        let i = j;
-        // off := idx[i+2:i]*64
-        let off = (idx[i] & 0x7) as usize;
-        // dst[i+63:i] := idx[i+3] ? b[off+63:off] : a[off+63:off]
-        dst[i] = if (idx[i] >> 3) & 1 != 0 { b[off] } else { a[off] };
-    // ENDFOR
-    }
-    // dst[MAX:512] := 0
-
-    unsafe { transmute(dst) }
-}
-
-#[cfg(not(all(miri, test)))]
-#[target_feature(enable = "avx512f,avx512bw")]
-fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
-    _mm512_permutex2var_epi64(a, idx, b)
-}
-
-// --- REAL CODE ---
+// --- ENCODING ---
 
 #[target_feature(enable = "avx512f,avx512bw")]
 pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u8) {
@@ -122,8 +88,8 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
     macro_rules! store_128_bytes {
         ($dst:expr, $inter_lo:expr, $inter_hi:expr) => {{
             // Reorder the data using the permutation indices
-            let ordered_1 = mm512_permutex2var_epi64($inter_lo, perm_idx_1, $inter_hi);
-            let ordered_2 = mm512_permutex2var_epi64($inter_lo, perm_idx_2, $inter_hi);
+            let ordered_1 = _mm512_permutex2var_epi64($inter_lo, perm_idx_1, $inter_hi);
+            let ordered_2 = _mm512_permutex2var_epi64($inter_lo, perm_idx_2, $inter_hi);
 
             unsafe {
                 _mm512_storeu_si512($dst as *mut _, ordered_1);
@@ -152,6 +118,8 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
         unsafe { scalar::encode_slice_unsafe(config, &input[processed_len..], dst) };
     }
 }
+
+// --- DECODING ---
 
 #[target_feature(enable = "avx512f,avx512bw")]
 pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), Error> {
@@ -363,7 +331,7 @@ mod kani_verification_avx512 {
         unsafe { transmute(dst) }
     }
 
-    // -- REAL TESTS --- 
+    // --- REAL TESTS --- 
 
     #[kani::proof]
     #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]

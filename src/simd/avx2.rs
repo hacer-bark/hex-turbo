@@ -36,6 +36,8 @@ const WEIGHTS: [u8; 32] = [
     16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
 ];
 
+// --- ENCODING ---
+
 #[target_feature(enable = "avx2")]
 pub unsafe fn encode_slice_avx2(config: &Config, input: &[u8], mut dst: *mut u8) {
     let len = input.len();
@@ -122,6 +124,8 @@ pub unsafe fn encode_slice_avx2(config: &Config, input: &[u8], mut dst: *mut u8)
         unsafe { scalar::encode_slice_unsafe(config, &input[processed_len..], dst) };
     }
 }
+
+// --- DECODING ---
 
 #[target_feature(enable = "avx2")]
 pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Error> {
@@ -221,6 +225,8 @@ pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Er
     Ok(())
 }
 
+// --- KANI (FORMAL VERIFICATION) ---
+
 #[cfg(kani)]
 mod kani_verification_avx2 {
     use super::*;
@@ -229,7 +235,7 @@ mod kani_verification_avx2 {
 
     const INPUT_LEN: usize = 33;
 
-    // --- HELPERS AND STUBS ---
+    // --- KANI STUBS ---
 
     // STUB: _mm256_shuffle_epi8
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_shuffle_epi8
@@ -344,7 +350,7 @@ mod kani_verification_avx2 {
         unsafe { transmute(dst) }
     }
 
-    // -- REAL LOGIC --- 
+    // --- REAL TESTS --- 
 
     #[kani::proof]
     #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
@@ -390,6 +396,8 @@ mod kani_verification_avx2 {
         }
     }
 }
+
+// --- MIRI (FORMAL VERIFICATION) ---
 
 #[cfg(all(test, miri))]
 mod avx2_miri_tests {

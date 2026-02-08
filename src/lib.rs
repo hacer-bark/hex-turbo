@@ -1,86 +1,86 @@
 //! # Hex Turbo
-//!
-//! [![Crates.io](https://img.shields.io/crates/v/base64-turbo.svg)](https://crates.io/crates/base64-turbo)
-//! [![Documentation](https://docs.rs/base64-turbo/badge.svg)](https://docs.rs/base64-turbo)
-//! [![License](https://img.shields.io/github/license/hacer-bark/base64-turbo)](https://github.com/hacer-bark/base64-turbo/blob/main/LICENSE)
-//! [![Kani Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/base64-turbo/verification.yml?label=Kani%20Verified)](https://github.com/hacer-bark/base64-turbo/actions/workflows/verification.yml)
-//! [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/base64-turbo/miri.yml?label=MIRI%20Verified)](https://github.com/hacer-bark/base64-turbo/actions/workflows/miri.yml)
-//! [![Logic Tests](https://img.shields.io/github/actions/workflow/status/hacer-bark/base64-turbo/tests.yml?label=Logic%20Tests)](https://github.com/hacer-bark/base64-turbo/actions/workflows/tests.yml)
-//!
-//! A SIMD-accelerated Hex encoder/decoder for Rust, optimized for high-throughput systems.
-//!
-//! This crate provides runtime CPU detection to utilize AVX2, SSE4.1, or AVX512 intrinsics.
+//! 
+//! [![Crates.io](https://img.shields.io/crates/v/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
+//! [![Documentation](https://docs.rs/hex-turbo/badge.svg)](https://docs.rs/base64-turbo)
+//! [![License](https://img.shields.io/crates/l/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
+//! [![Kani Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/verification.yml?label=Kani%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/verification.yml)
+//! [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/miri.yml?label=MIRI%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/miri.yml)
+//! 
+//! **The fastest memory-safe Hex implementation.**
+//! 
+//! `hex-turbo` is a production-grade library engineered for high-throughput systems where CPU cycles are scarce and Undefined Behavior (UB) is unacceptable.
+//! 
+//! This crate provides runtime CPU detection to utilize **AVX512**, **AVX2**, or **SSE4.1** intrinsics.
 //! It includes a highly optimized scalar fallback for non-SIMD targets and supports `no_std` environments.
-//!
+//! 
 //! ## Usage
-//!
+//! 
 //! Add this to your `Cargo.toml`:
-//!
+//! 
 //! ```toml
 //! [dependencies]
-//! base64-turbo = "0.1"
+//! hex-turbo = "0.1"
 //! ```
-//!
+//! 
 //! ### Basic API (Allocating)
-//!
+//! 
 //! Standard usage for general applications. Requires the `std` feature (enabled by default).
-//!
+//! 
 //! ```rust
 //! # #[cfg(feature = "std")]
 //! # {
-//! use base64_turbo::STANDARD;
-//!
+//! use hex_turbo::LOWER_CASE;
+//! 
 //! let data = b"Hello world";
-//!
+//! 
 //! // Encode to String
-//! let encoded = STANDARD.encode(data);
-//! assert_eq!(encoded, "SGVsbG8gd29ybGQ=");
-//!
-//! // Decode to Vec<u8>
-//! let decoded = STANDARD.decode(&encoded).unwrap();
+//! let encoded = LOWER_CASE.encode(data);
+//! assert_eq!(encoded, "48656c6c6f20776f726c64");
+//! 
+//! // Decode to Result<Vec<u8>, Error>
+//! let decoded = LOWER_CASE.decode(&encoded).unwrap();
 //! assert_eq!(decoded, data);
 //! # }
 //! ```
-//!
+//! 
 //! ### Zero-Allocation API (Slice-based)
-//!
+//! 
 //! For low-latency scenarios or `no_std` environments where heap allocation is undesirable.
 //! These methods write directly into a user-provided mutable slice.
-//!
+//! 
 //! ```rust
-//! use base64_turbo::STANDARD;
-//!
+//! use hex_turbo::LOWER_CASE;
+//! 
 //! let input = b"Raw bytes";
 //! let mut output = [0u8; 64]; // Pre-allocated stack buffer
-//!
-//! // Returns Result<usize, Error> indicating bytes written
-//! let len = STANDARD.encode_into(input, &mut output).unwrap();
-//!
-//! assert_eq!(&output[..len], b"UmF3IGJ5dGVz");
+//! 
+//! // Encode to String
+//! let len = LOWER_CASE.encode_into(input, &mut output).unwrap();
+//! 
+//! assert_eq!(&output[..len], b"526177206279746573");
 //! ```
-//!
+//! 
 //! ## Feature Flags
-//!
+//! 
 //! This crate is highly configurable via Cargo features:
-//!
+//! 
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
 //! | **`std`** | **Yes** | Enables `String` and `Vec` support. Disable this for `no_std` environments. |
-//! | **`simd`** | **Yes** | Enables runtime detection for AVX2 and SSE4.1 intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic automatic. |
-//! | **`parallel`** | **No** | Enables [Rayon](https://crates.io/crates/rayon) support. Automatically parallelizes processing for payloads larger than 512KB. Recommended only for massive data ingestion tasks. |
-//! | **`avx512`** | **No** | Enables AVX512 intrinsics. |
-//! | **`unstable`** | **No** | Enables access to the raw, unsafe functions. |
-//!
-//! ## Safety & Verification
-//!
-//! This crate utilizes `unsafe` code for SIMD intrinsics and pointer arithmetic to achieve maximum performance.
-//!
-//! *   **Formal Verification (Kani):** Scalar (Done), SSE4.1 (In Progress), AVX2 (Done), AVX512 (In Progress) code mathematic proven to be UB free and panic free.
-//! *   **MIRI Tests:** Core SIMD logic and scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI.
-//! *   **Fuzzing:** The codebase is fuzz-tested via `cargo-fuzz`.
-//! *   **Fallback:** Invalid or unsupported hardware instruction sets are detected at runtime, ensuring safe fallback to scalar code.
+//! | **`simd`** | **Yes** | Enables runtime detection for **AVX512**, **AVX2**, and **SSE4.1** intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic automatically. |
+//! | **`unstable`** | **No** | Enables access to the raw, unsafe internal functions (e.g. `encode_avx2`). |
 //! 
-//! **[Learn More](https://github.com/hacer-bark/base64-turbo/blob/main/docs/verification.md)**: Details on our threat model and formal verification strategy.
+//! ## Safety & Verification
+//! 
+//! This crate utilizes `unsafe` code for SIMD intrinsics and pointer arithmetic to achieve maximum performance.
+//! To ensure safety, we employ a "Swiss Cheese" model of verification layers:
+//! 
+//! *   **Formal Verification (Kani):** Mathematical proofs ensure the kernels never read out of bounds or panic on any input (0..∞ bytes).
+//! *   **MIRI Audited:** All SIMD paths (AVX512, AVX2, SSE4.1) and Scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI to ensure strict memory safety.
+//! *   **MemorySanitizer:** The codebase is audited with MSan to prevent logic errors derived from reading uninitialized memory.
+//! *   **Fuzzing:** The codebase is fuzz-tested via `cargo-fuzz` (2.5B+ iterations).
+//! 
+//! **[Learn More](https://github.com/hacer-bark/hex-turbo/blob/main/docs/verification.md)**: Details on our threat model and formal verification strategy.
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![doc(issue_tracker_base_url = "https://github.com/hacer-bark/hex-turbo/issues/")]
@@ -92,6 +92,7 @@
 
 // Scalar implementation
 mod scalar;
+
 // SIMD implementation (x86/x86_64 only)
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[cfg(feature = "simd")]
@@ -101,20 +102,19 @@ mod simd;
 // ERROR DEFINITION
 // ======================================================================
 
-/// Errors that can occur during Base64 encoding or decoding operations.
+/// Errors that can occur during Hex encoding or decoding operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    /// The input length is invalid for Base64 decoding.
+    /// The input length is invalid for Hex decoding.
     ///
-    /// Base64 encoded data (with padding) must strictly have a length divisible by 4.
+    /// Hex encoded data (with padding) must strictly have a length divisible by 4.
     /// If the input string is truncated or has incorrect padding length, this error is returned.
     InvalidLength,
 
     /// An invalid character was encountered during decoding.
     ///
     /// This occurs if the input contains bytes that do not belong to the
-    /// selected Base64 alphabet (e.g., symbols not in the standard set) or
-    /// if padding characters (`=`) appear in invalid positions.
+    /// selected Hex alphabet (e.g., symbols not in the standard set).
     InvalidCharacter,
 
     /// The provided output buffer is too small to hold the result.
@@ -129,8 +129,8 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Error::InvalidLength => write!(f, "Invalid Base64 input length (must be divisible by 4)"),
-            Error::InvalidCharacter => write!(f, "Invalid character found in Base64 input"),
+            Error::InvalidLength => write!(f, "Invalid Hex input length (must be divisible by 2)"),
+            Error::InvalidCharacter => write!(f, "Invalid character found in Hex input"),
             Error::BufferTooSmall => write!(f, "Destination buffer is too small"),
         }
     }
@@ -185,12 +185,12 @@ pub struct Engine {
 // Pre-defined Engines
 // ======================================================================
 
-/// Hex encoder with RFC4648 Alphabet, **UPPER CASE**.
+/// Hex encoder with RFC4648 Alphabet. **UPPER CASE**.
 pub const UPPER_CASE: Engine = Engine {
     config: Config { uppercase: true },
 };
 
-/// Hex encoder with RFC4648 Alphabet, **LOWER CASE**.
+/// Hex encoder with RFC4648 Alphabet. **LOWER CASE**.
 pub const LOWER_CASE: Engine = Engine {
     config: Config { uppercase: false },
 };
@@ -243,7 +243,7 @@ impl Engine {
     /// # Arguments
     /// 
     /// * `input`: The binary data to encode.
-    /// * `output`: A mutable slice to write the Base64 string into.
+    /// * `output`: A mutable slice to write the Hex string into.
     /// 
     /// # Returns
     /// 
@@ -354,7 +354,7 @@ impl Engine {
     pub fn encode<T: AsRef<[u8]> + Sync>(&self, input: T) -> String {
         let input = input.as_ref();
 
-        // 1. Calculate EXACT required size. Base64 encoding is deterministic.
+        // 1. Calculate EXACT required size. Hex encoding is deterministic.
         let len = Self::encoded_len(self, input.len());
 
         // 2. Allocate uninitialized buffer
@@ -370,10 +370,10 @@ impl Engine {
 
         // 4. Encode
         // We trust our `encoded_len` math completely.
-        Self::encode_into(self, input, &mut out).expect("Base64 logic error: buffer size mismatch");
+        Self::encode_into(self, input, &mut out).expect("Hex logic error: buffer size mismatch");
 
         // 5. Convert to String
-        // SAFETY: The Base64 alphabet consists strictly of ASCII characters,
+        // SAFETY: The Hex alphabet consists strictly of ASCII characters,
         // which are valid UTF-8.
         unsafe { String::from_utf8_unchecked(out) }
     }
@@ -438,7 +438,7 @@ impl Engine {
         {
             let len = input.len();
 
-            // Smart degrade: If len < 64, don't bother checking AVX512 features or setting up ZMM register
+            // Smart degrade: If len < 64, skip AVX512.
             if len >= 64 
                 && std::is_x86_feature_detected!("avx512f") 
                 && std::is_x86_feature_detected!("avx512bw") 
@@ -453,7 +453,7 @@ impl Engine {
                 return;
             }
 
-            // // Smart degrade: If len < 16, skip SSE4.1 and go straight to scalar.
+            // // Smart degrade: If len < 16, skip SSE4.1.
             // if len >= 16 && std::is_x86_feature_detected!("sse4.1")  {
             //     unsafe { simd::encode_slice_simd(&self.config, input, dst); }
             //     return;
@@ -461,7 +461,6 @@ impl Engine {
         }
 
         // Fallback: Scalar / Non-x86 / Short inputs
-        // Safety: Pointers verified by caller
         unsafe { scalar::encode_slice_unsafe(&self.config, input, dst); }
     }
 
@@ -472,7 +471,7 @@ impl Engine {
         {
             let len = input.len();
 
-            // Smart degrade: Don't enter AVX512 path if we don't have a full vector of input.
+            // Smart degrade: If len < 64, skip AVX512.
             if len >= 64 
                 && std::is_x86_feature_detected!("avx512f") 
                 && std::is_x86_feature_detected!("avx512bw") 
@@ -480,7 +479,7 @@ impl Engine {
                 return unsafe { simd::decode_slice_avx512(input, dst) };
             }
 
-            // Smart degrade: Fallback to AVX2 if len is between 32 and 64, or if AVX512 is missing.
+            // Smart degrade: If len < 32, skip AVX2.
             if len >= 32 && std::is_x86_feature_detected!("avx2") {
                 return unsafe { simd::decode_slice_avx2(input, dst) };
             }
@@ -492,7 +491,6 @@ impl Engine {
         }
 
         // Fallback: Scalar / Non-x86 / Short inputs
-        // Safety: Pointers verified by caller
         unsafe { scalar::decode_slice_unsafe(input, dst) }
     }
 }

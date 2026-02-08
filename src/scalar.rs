@@ -1,5 +1,7 @@
 use crate::{Error, Config};
 
+// --- CONSTANTS ---
+
 const LOWER_ALPHABET: [u8; 16] = *b"0123456789abcdef";
 const UPPER_ALPHABET: [u8; 16] = *b"0123456789ABCDEF";
 
@@ -24,6 +26,8 @@ const HEX_DECODE_TABLE: [u8; 256] = {
 
     table
 };
+
+// --- ENCODING ---
 
 #[inline(always)]
 pub unsafe fn encode_slice_unsafe(config: &Config, input: &[u8], mut dst: *mut u8) {
@@ -82,7 +86,8 @@ pub unsafe fn encode_slice_unsafe(config: &Config, input: &[u8], mut dst: *mut u
     }
 }
 
-/// Decodes a hexadecimal byte slice using a highly optimized scalar algorithm.
+// --- DECODING ---
+
 #[inline(always)]
 pub unsafe fn decode_slice_unsafe(input: &[u8], mut dst: *mut u8) -> Result<(), Error> {
     let len = input.len();
@@ -152,6 +157,8 @@ pub unsafe fn decode_slice_unsafe(input: &[u8], mut dst: *mut u8) -> Result<(), 
     }
 }
 
+// --- KANI (FORMAL VERIFICATION) ---
+
 #[cfg(kani)]
 mod kani_verification_scalar {
     use super::*;
@@ -159,7 +166,7 @@ mod kani_verification_scalar {
 
     const INPUT_LEN: usize = 17;
 
-    // -- REAL LOGIC --- 
+    // --- REAL TESTS --- 
 
     #[kani::proof]
     fn check_roundtrip_safety() {
