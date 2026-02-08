@@ -225,6 +225,7 @@ pub unsafe fn decode_slice_avx512(input: &[u8], mut dst: *mut u8) -> Result<(), 
 mod kani_verification_avx512 {
     use super::*;
     use crate::Config;
+    use core::mem::transmute;
 
     const INPUT_LEN: usize = 65;
 
