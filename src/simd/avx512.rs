@@ -365,6 +365,8 @@ mod kani_verification_avx512 {
     #[kani::proof]
     #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]
     #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
+    #[kani::stub(_mm512_maddubs_epi16, mm512_maddubs_epi16_stub)]
+    #[kani::stub(_mm512_cvtepi16_epi8, mm512_cvtepi16_epi8_stub)]
     fn check_decoder_robustness() {
         // Symbolic Input (Random Garbage)
         let input: [u8; INPUT_LEN] = kani::any();
