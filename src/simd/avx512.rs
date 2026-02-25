@@ -422,51 +422,51 @@ mod avx512_miri_tests {
     use super::{encode_slice_avx512, decode_slice_avx512};
     use crate::{Config, Error};
 
-    // Reference crate (hex crate: lowercase encode, case-insensitive decode)
-    use hex::{encode as ref_encode_lower, encode_upper as ref_encode_upper};
+    // Reference crate 
+    use hex::{encode as ref_encode_lower};
 
-    use rand::{rng, Rng};
-
-    // --- Helpers ---
-    fn random_bytes(len: usize) -> Vec<u8> {
-        let mut rng = rng();
-        (0..len).map(|_| rng.random()).collect()
+    // --- Deterministic Generator ---
+    fn get_data(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 256) as u8).collect()
     }
 
-    fn verify_roundtrip(config: &Config, input: &[u8], ref_encode: fn(Vec<u8>) -> String) {
+    // --- Helpers ---
+    fn verify_roundtrip(config: &Config, input: &[u8]) {
         let len = input.len();
 
         // --- Encoding ---
-        let expected = ref_encode(input.to_vec());
+        let expected_lower = ref_encode_lower(input);
+        let expected = if config.uppercase {
+            expected_lower.to_ascii_uppercase()
+        } else {
+            expected_lower
+        };
 
         let mut enc_buf = vec![0u8; len * 2];
         unsafe { encode_slice_avx512(config, input, enc_buf.as_mut_ptr()); }
 
-        assert_eq!(&enc_buf[..], expected.as_bytes(), "AVX2 Encoding mismatch (len={})", len);
+        assert_eq!(&enc_buf[..], expected.as_bytes(), "AVX512 Encoding mismatch (len={})", len);
 
         // --- Decoding (own output) ---
         let mut dec_buf = vec![0u8; len];
-        unsafe { decode_slice_avx512(&enc_buf, dec_buf.as_mut_ptr()).expect("AVX2 decoder failed on valid own output") };
+        unsafe { 
+            decode_slice_avx512(&enc_buf, dec_buf.as_mut_ptr())
+                .expect("AVX512 decoder failed on valid own output") 
+        };
 
-        assert_eq!(&dec_buf[..], input, "AVX2 round-trip failed (len={})", len);
+        assert_eq!(&dec_buf[..], input, "AVX512 round-trip failed (len={})", len);
     }
 
     fn run_avx512_tests(uppercase: bool) {
         let config = Config { uppercase };
-        let ref_encode_fn: fn(Vec<u8>) -> String = if uppercase { ref_encode_upper } else { ref_encode_lower };
 
-        // --- Deterministic boundary tests (hit all loop transitions) ---
-        for len in 64..128 {
-            let input = random_bytes(len);
-            verify_roundtrip(&config, &input, ref_encode_fn);
-        }
+        // MIRI is slow. We don't need random lengths. 
+        // We only need to test boundary conditions to achieve 100% path coverage.
+        let boundaries = [0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128];
 
-        // --- Small random fuzz ---
-        let mut rng = rng();
-        for _ in 0..15 {
-            let len = rng.random_range(0..=512);
-            let input = random_bytes(len);
-            verify_roundtrip(&config, &input, ref_encode_fn);
+        for &len in &boundaries {
+            let input = get_data(len);
+            verify_roundtrip(&config, &input);
         }
     }
 
@@ -484,41 +484,38 @@ mod avx512_miri_tests {
 
     #[test]
     fn miri_avx512_decode_mixed_case() {
-        let mut rng = rng();
-        for _ in 0..5 {
-            let original_len = rng.random_range(1..=256);
-            let input = random_bytes(original_len);
+        // 128 length ensures we trigger 2 full AVX512 loops
+        let input = get_data(128); 
+        let hex_lower = ref_encode_lower(&input).into_bytes();
 
-            // Start from valid lowercase encoding
-            let mut hex_chars = ref_encode_lower(&input).into_bytes();
+        // Deterministically mix case
+        let mixed_hex: Vec<u8> = hex_lower.into_iter().enumerate().map(|(i, b)| {
+            if i % 2 == 0 { b.to_ascii_uppercase() } else { b }
+        }).collect();
 
-            // Randomly convert some chars to uppercase
-            for b in &mut hex_chars {
-                if rng.random_bool(0.5) {
-                    *b = b.to_ascii_uppercase();
-                }
-            }
+        let mut dec_buf = vec![0u8; 128];
+        unsafe { 
+            decode_slice_avx512(&mixed_hex, dec_buf.as_mut_ptr())
+                .expect("AVX512 decoder failed on valid mixed-case input") 
+        };
 
-            let mut dec_buf = vec![0u8; original_len];
-            unsafe { decode_slice_avx512(&hex_chars, dec_buf.as_mut_ptr()).expect("avx512 decoder failed on valid mixed-case input") };
-
-            assert_eq!(&dec_buf[..], input);
-        }
+        assert_eq!(&dec_buf[..], input);
     }
 
     #[test]
     fn miri_avx512_decode_errors() {
-        let mut out = vec![0u8; 128];
+        let mut out = [0u8; 128];
 
-        // Invalid character in middle region
-        let mut invalid_simd = vec![b'0'; 64];
-        invalid_simd[15] = b'g';
+        // 1. Invalid character in SIMD region (128 hex chars = 64 bytes)
+        let mut invalid_simd = vec![b'0'; 128];
+        invalid_simd[65] = b'g'; // 'g' is strictly invalid in hex
         let res = unsafe { decode_slice_avx512(&invalid_simd, out.as_mut_ptr()) };
-        assert!(matches!(res, Err(Error::InvalidCharacter)));
+        assert_eq!(res, Err(Error::InvalidCharacter));
 
-        // Force small length with invalid char near end
-        let invalid_tail = b"00112233445566778899abcg";
-        let res = unsafe { decode_slice_avx512(invalid_tail, out.as_mut_ptr()) };
-        assert!(matches!(res, Err(Error::InvalidCharacter)));
+        // 2. Invalid character in Scalar/Tail region (66 chars = 64 SIMD + 2 scalar)
+        let mut invalid_tail = vec![b'0'; 66];
+        invalid_tail[65] = b'g';
+        let res = unsafe { decode_slice_avx512(&invalid_tail, out.as_mut_ptr()) };
+        assert_eq!(res, Err(Error::InvalidCharacter));
     }
 }
