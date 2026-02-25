@@ -10,7 +10,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/**'
-request:
+  pull_request:
     branches: [ "main" ]
     paths:
       - '**.rs'
