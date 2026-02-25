@@ -261,9 +261,15 @@ mod kani_verification_avx512 {
     use crate::Config;
     use core::mem::transmute;
 
-    const INPUT_LEN: usize = 65;
+    // --- CONSTANTS ---
 
-    // --- KANI STUBS ---
+    // Encoder Induction Size: 64 (1 AVX512 Loop) + 1 (Scalar Transition)
+    const ENC_INDUCTION_LEN: usize = 65;
+
+    // Decoder Induction Size: 64 (1 AVX512 Loop) + 1 (Scalar Transition)
+    const DEC_INDUCTION_LEN: usize = 65;
+
+    // --- STUBS ---
 
     // STUB: _mm512_shuffle_epi8
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_shuffle_epi8
@@ -368,49 +374,62 @@ mod kani_verification_avx512 {
 
     // --- REAL TESTS --- 
 
+    /// **Proof 1: Roundtrip Correctness (The Logic Check)**
+    /// 
+    /// Verifies that `Decode(Encode(X)) == X`.
     #[kani::proof]
     #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]
     #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
     #[kani::stub(_mm512_maddubs_epi16, mm512_maddubs_epi16_stub)]
     #[kani::stub(_mm512_cvtepi16_epi8, mm512_cvtepi16_epi8_stub)]
-    fn check_roundtrip_safety() {
-        // Symbolic Config
+    fn check_avx2_roundtrip_correctness() {
         let config = Config { uppercase: kani::any() };
+        let input: [u8; ENC_INDUCTION_LEN] = kani::any();
+        let input_len = input.len();
 
-        // Symbolic Input
-        let input: [u8; INPUT_LEN] = kani::any();
-
-        // Setup Buffers
-        let mut enc_buf = [0u8; INPUT_LEN * 2];
-        let mut dec_buf = [0u8; INPUT_LEN];
+        // Buffers
+        let mut enc_buf = [0u8; 128];
+        let mut dec_buf = [0u8; 128];
 
         unsafe {
-            // Encode
+            // 1. Encode
             encode_slice_avx512(&config, &input, enc_buf.as_mut_ptr());
 
-            // Decode
-            decode_slice_avx512(&enc_buf, dec_buf.as_mut_ptr()).expect("Decoder failed");
+            // Calculate actual encoded length for slicing
+            let encoded_slice = &enc_buf[..input_len * 2];
 
-            // Verification
-            assert_eq!(&dec_buf, &input, "AVX512 Roundtrip Failed");
+            // 2. Decode
+            // This MUST succeed for valid encoded output
+            decode_slice_avx512(encoded_slice, dec_buf.as_mut_ptr())
+                .expect("Valid encoding failed to decode");
+
+            // 3. Verify
+            assert_eq!(&dec_buf[..input_len], &input, "Roundtrip mismatch");
         }
     }
 
+    /// **Proof 2: Decoder Robustness & Induction**
+    /// 
+    /// Verifies that `decode_slice_avx2`:
+    /// 1. Accepts ANY `N` bytes of garbage input.
+    /// 2. Never Segfaults, Panics, or causes UB.
+    /// 3. Safely handles the SIMD->Scalar pointer transition.
     #[kani::proof]
     #[kani::stub(_mm512_shuffle_epi8, mm512_shuffle_epi8_stub)]
     #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
     #[kani::stub(_mm512_maddubs_epi16, mm512_maddubs_epi16_stub)]
     #[kani::stub(_mm512_cvtepi16_epi8, mm512_cvtepi16_epi8_stub)]
-    fn check_decoder_robustness() {
-        // Symbolic Input (Random Garbage)
-        let input: [u8; INPUT_LEN] = kani::any();
-
-        // Setup Buffer
-        let mut dec_buf = [0u8; INPUT_LEN * 2];
+    fn check_avx2_decode_robustness() {
+        // Input: `N` bytes of unrestricted symbolic data (garbage)
+        let input: [u8; DEC_INDUCTION_LEN] = kani::any();
+        
+        // Output Buffer: Max estimated size
+        let mut output = [0u8; 128];
 
         unsafe {
-            // We verify what function NEVER panics/crashes
-            let _ = decode_slice_avx512(&input, dec_buf.as_mut_ptr());
+            // We ignore the Result. We only care that this function call 
+            // returns safely (Ok or Err) and does not crash.
+            let _ = decode_slice_avx512(&input, output.as_mut_ptr());
         }
     }
 }
