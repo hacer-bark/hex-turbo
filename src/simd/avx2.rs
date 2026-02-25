@@ -262,6 +262,56 @@ mod kani_verification_avx2 {
         unsafe { transmute(dst) }
     }
 
+    // STUB: _mm256_testz_si256
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_testz_si256
+    // Note: in this logic added complexity as Rust do not support 256 bits values.
+    #[allow(dead_code)]
+    unsafe fn mm256_testz_si256_stub(a: __m256i, b: __m256i) -> i32 {
+        let a: [u64; 4] = unsafe { transmute(a) };
+        let b: [u64; 4] = unsafe { transmute(b) };
+        let zf: i32;
+        let _cf: i32;
+
+        // Perform 256 bit AND
+        let res_and = [
+            a[0] & b[0],
+            a[1] & b[1],
+            a[2] & b[2],
+            a[3] & b[3],
+        ];
+
+        // IF ((a[255:0] AND b[255:0]) == 0)
+        if res_and[0] == 0 && res_and[1] == 0 && res_and[2] == 0 && res_and[3] == 0 {
+            // ZF := 1
+            zf = 1;
+        } else {
+            // ZF := 0
+            zf = 0;
+        }
+        // FI
+
+        // Perform 256 bit (NOT a) AND b
+        let res_not_and = [
+            (!a[0]) & b[0],
+            (!a[1]) & b[1],
+            (!a[2]) & b[2],
+            (!a[3]) & b[3],
+        ];
+
+        // IF (((NOT a[255:0]) AND b[255:0]) == 0)
+        if res_not_and[0] == 0 && res_not_and[1] == 0 && res_not_and[2] == 0 && res_not_and[3] == 0 {
+            // CF := 1
+            _cf = 1;
+        } else {
+            // CF := 0
+            _cf = 0;
+        }
+        // FI
+
+        // RETURN ZF
+        return zf;
+    }
+
     // STUB: _mm_packus_epi16
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm_packus_epi16
     #[allow(dead_code)]
@@ -314,6 +364,7 @@ mod kani_verification_avx2 {
     #[kani::proof]
     #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
     #[kani::stub(_mm256_maddubs_epi16, mm256_maddubs_epi16_stub)]
+    #[kani::stub(_mm256_testz_si256, mm256_testz_si256_stub)]
     #[kani::stub(_mm_packus_epi16, mm_packus_epi16_stub)]
     fn check_avx2_roundtrip_correctness() {
         let config = Config { uppercase: kani::any() };
@@ -350,6 +401,7 @@ mod kani_verification_avx2 {
     #[kani::proof]
     #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
     #[kani::stub(_mm256_maddubs_epi16, mm256_maddubs_epi16_stub)]
+    #[kani::stub(_mm256_testz_si256, mm256_testz_si256_stub)]
     #[kani::stub(_mm_packus_epi16, mm_packus_epi16_stub)]
     fn check_avx2_decode_robustness() {
         // Input: `N` bytes of unrestricted symbolic data (garbage)
