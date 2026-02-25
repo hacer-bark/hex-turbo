@@ -21,6 +21,10 @@ default = ["std", "simd"]
 unstable = []
 std = []
 simd = ["std"]
+serde = ["std", "dep:serde"]
+
+[dependencies]
+serde = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 rand = "0.9"
@@ -48,6 +52,3 @@ strip = true
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-
-[dependencies]
-hex = "0.4.3"

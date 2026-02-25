@@ -40,88 +40,56 @@ const WEIGHTS: [u8; 32] = [
 
 #[target_feature(enable = "avx2")]
 pub unsafe fn encode_slice_avx2(config: &Config, input: &[u8], mut dst: *mut u8) {
-    let len = input.len();
-    let mut src = input.as_ptr();
-    let start_ptr = input.as_ptr();
-
-    // Select and load the appropriate 32-byte shuffle table
     let table_ptr = if config.uppercase { HEX_TABLE_UPPER.as_ptr() } else { HEX_TABLE_LOWER.as_ptr() };
     let table = unsafe { _mm256_loadu_si256(table_ptr as *const __m256i) };
-
     let mask_0f = _mm256_set1_epi8(0x0F);
 
-    macro_rules! encode_vec {
-        ($in_vec:expr) => {{
-            // Extract nibble indices (0-15) into low bits of each byte
+    macro_rules! encode_chunk {
+        ($in_vec:expr, $dst_ptr:expr) => {{
             let low_idx  = _mm256_and_si256($in_vec, mask_0f);
             let high_idx = _mm256_and_si256(_mm256_srli_epi16($in_vec, 4), mask_0f);
 
-            // LUT lookup via pshufb
             let low_chars  = _mm256_shuffle_epi8(table, low_idx);
             let high_chars = _mm256_shuffle_epi8(table, high_idx);
 
-            // Interleave high nibble char first, then low
             let inter_lo = _mm256_unpacklo_epi8(high_chars, low_chars);
             let inter_hi = _mm256_unpackhi_epi8(high_chars, low_chars);
 
-            (inter_lo, inter_hi)
+            let out0 = _mm256_permute2x128_si256(inter_lo, inter_hi, 0x20);
+            let out1 = _mm256_permute2x128_si256(inter_lo, inter_hi, 0x31);
+
+            unsafe { _mm256_storeu_si256($dst_ptr as *mut __m256i, out0) };
+            unsafe { _mm256_storeu_si256($dst_ptr.add(32) as *mut __m256i, out1) };
         }};
     }
 
-    macro_rules! store_64_bytes {
-        ($dst:expr, $inter_lo:expr, $inter_hi:expr) => {{
-            unsafe {
-                _mm_storeu_si128($dst as *mut __m128i, _mm256_castsi256_si128($inter_lo));
-                _mm_storeu_si128($dst.add(16) as *mut __m128i, _mm256_castsi256_si128($inter_hi));
-                _mm_storeu_si128($dst.add(32) as *mut __m128i, _mm256_extracti128_si256($inter_lo, 1));
-                _mm_storeu_si128($dst.add(48) as *mut __m128i, _mm256_extracti128_si256($inter_hi, 1));
-            }
-        }};
-    }
+    let mut src = input;
 
-    // --- Big Loop: Process 128 input bytes (256 output bytes) ---
-    let limit_128 = (len / 128) * 128;
-    let src_end_128 = unsafe { start_ptr.add(limit_128) };
+    while src.len() >= 128 {
+        let v0 = unsafe { _mm256_loadu_si256(src.as_ptr() as *const __m256i) };
+        let v1 = unsafe { _mm256_loadu_si256(src.as_ptr().add(32) as *const __m256i) };
+        let v2 = unsafe { _mm256_loadu_si256(src.as_ptr().add(64) as *const __m256i) };
+        let v3 = unsafe { _mm256_loadu_si256(src.as_ptr().add(96) as *const __m256i) };
 
-    while src < src_end_128 {
-        // Load 128 input bytes (4 vectors)
-        let v0 = unsafe { _mm256_loadu_si256(src as *const __m256i) };
-        let v1 = unsafe { _mm256_loadu_si256(src.add(32) as *const __m256i) };
-        let v2 = unsafe { _mm256_loadu_si256(src.add(64) as *const __m256i) };
-        let v3 = unsafe { _mm256_loadu_si256(src.add(96) as *const __m256i) };
+        encode_chunk!(v0, dst);
+        encode_chunk!(v1, dst.add(64));
+        encode_chunk!(v2, dst.add(128));
+        encode_chunk!(v3, dst.add(192));
 
-        let (lo0, hi0) = encode_vec!(v0);
-        let (lo1, hi1) = encode_vec!(v1);
-        let (lo2, hi2) = encode_vec!(v2);
-        let (lo3, hi3) = encode_vec!(v3);
-
-        store_64_bytes!(dst, lo0, hi0);
-        store_64_bytes!(dst.add(64), lo1, hi1);
-        store_64_bytes!(dst.add(128), lo2, hi2);
-        store_64_bytes!(dst.add(192), lo3, hi3);
-
-        src = unsafe { src.add(128) };
+        src = &src[128..];
         dst = unsafe { dst.add(256) };
     }
 
-    // --- Small Loop: Process 32 input bytes (64 output bytes) ---
-    let limit_32 = (len / 32) * 32;
-    let src_end_32 = unsafe { start_ptr.add(limit_32) };
+    while src.len() >= 32 {
+        let v = unsafe { _mm256_loadu_si256(src.as_ptr() as *const __m256i) };
+        encode_chunk!(v, dst);
 
-    while src < src_end_32 {
-        let v = unsafe { _mm256_loadu_si256(src as *const __m256i) };
-        let (lo, hi) = encode_vec!(v);
-
-        store_64_bytes!(dst, lo, hi);
-
-        src = unsafe { src.add(32) };
+        src = &src[32..];
         dst = unsafe { dst.add(64) };
     }
 
-    // --- Scalar Fallback ---
-    let processed_len = unsafe { src.offset_from(start_ptr) } as usize;
-    if processed_len < len {
-        unsafe { scalar::encode_slice_unsafe(config, &input[processed_len..], dst) };
+    if !src.is_empty() {
+        unsafe { scalar::encode_slice_unsafe(config, src, dst) };
     }
 }
 
@@ -129,97 +97,79 @@ pub unsafe fn encode_slice_avx2(config: &Config, input: &[u8], mut dst: *mut u8)
 
 #[target_feature(enable = "avx2")]
 pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Error> {
-    let len = input.len();
-    let mut src = input.as_ptr();
-
     let lut_hi = unsafe { _mm256_loadu_si256(LUT_HI.as_ptr() as *const __m256i) };
     let lut_lo = unsafe { _mm256_loadu_si256(LUT_LO.as_ptr() as *const __m256i) };
     let weights = unsafe { _mm256_loadu_si256(WEIGHTS.as_ptr() as *const __m256i) };
-    let mask_0f = _mm256_set1_epi8(0x0F);
 
-    macro_rules! decode_hex_vec {
+    let mask_0f = _mm256_set1_epi8(0x0F);
+    let zero = _mm256_setzero_si256();
+
+    macro_rules! decode_chunk {
         ($input:expr) => {{
-            // Split nibbles
             let lo = _mm256_and_si256($input, mask_0f);
             let hi = _mm256_and_si256(_mm256_srli_epi16($input, 4), mask_0f);
 
-            // LUT lookups
             let hi_props = _mm256_shuffle_epi8(lut_hi, hi);
             let lo_props = _mm256_shuffle_epi8(lut_lo, lo);
 
-            // Validation + error mask
-            let valid_flags = _mm256_and_si256(hi_props, lo_props);
-            let err = _mm256_cmpeq_epi8(valid_flags, _mm256_setzero_si256());
+            let valid = _mm256_and_si256(hi_props, lo_props);
+            let err = _mm256_cmpeq_epi8(valid, zero);
 
-            // Value calculation
             let offset = _mm256_and_si256(hi_props, mask_0f);
             let nibbles = _mm256_add_epi8(lo, offset);
 
-            // Pack to bytes (high * 16 + low)
-            let pairs_i16 = _mm256_maddubs_epi16(nibbles, weights);
-            let low = _mm256_castsi256_si128(pairs_i16);
-            let high = _mm256_extracti128_si256(pairs_i16, 1);
-            let result_128 = _mm_packus_epi16(low, high);
+            let pairs = _mm256_maddubs_epi16(nibbles, weights);
+            let low = _mm256_castsi256_si128(pairs);
+            let high = _mm256_extracti128_si256(pairs, 1);
 
-            (result_128, err)
+            (_mm_packus_epi16(low, high), err)
         }};
     }
 
-    // --- Large unrolled loop: 128 input bytes (64 output bytes) ---
-    let limit_128 = (len / 128) * 128;
-    let src_end_128 = unsafe { input.as_ptr().add(limit_128) };
-    while src < src_end_128 {
-        let v0 = unsafe { _mm256_loadu_si256(src as *const __m256i) };
-        let v1 = unsafe { _mm256_loadu_si256(src.add(32) as *const __m256i) };
-        let v2 = unsafe { _mm256_loadu_si256(src.add(64) as *const __m256i) };
-        let v3 = unsafe { _mm256_loadu_si256(src.add(96) as *const __m256i) };
+    let mut src = input;
 
-        let (r0, e0) = decode_hex_vec!(v0);
-        let (r1, e1) = decode_hex_vec!(v1);
-        let (r2, e2) = decode_hex_vec!(v2);
-        let (r3, e3) = decode_hex_vec!(v3);
+    while src.len() >= 128 {
+        let v0 = unsafe { _mm256_loadu_si256(src.as_ptr() as *const __m256i) };
+        let v1 = unsafe { _mm256_loadu_si256(src.as_ptr().add(32) as *const __m256i) };
+        let v2 = unsafe { _mm256_loadu_si256(src.as_ptr().add(64) as *const __m256i) };
+        let v3 = unsafe { _mm256_loadu_si256(src.as_ptr().add(96) as *const __m256i) };
 
-        let err_any = _mm256_or_si256(
-            _mm256_or_si256(e0, e1),
-            _mm256_or_si256(e2, e3),
-        );
+        let (r0, e0) = decode_chunk!(v0);
+        let (r1, e1) = decode_chunk!(v1);
+        let (r2, e2) = decode_chunk!(v2);
+        let (r3, e3) = decode_chunk!(v3);
 
-        if _mm256_movemask_epi8(err_any) != 0 {
+        let err_any = _mm256_or_si256(_mm256_or_si256(e0, e1), _mm256_or_si256(e2, e3));
+        
+        if _mm256_testz_si256(err_any, err_any) == 0 {
             return Err(Error::InvalidCharacter);
         }
 
-        unsafe {
-            _mm_storeu_si128(dst as *mut __m128i, r0);
-            _mm_storeu_si128(dst.add(16) as *mut __m128i, r1);
-            _mm_storeu_si128(dst.add(32) as *mut __m128i, r2);
-            _mm_storeu_si128(dst.add(48) as *mut __m128i, r3);
-            src = src.add(128);
-            dst = dst.add(64);
-        }
+        unsafe { _mm_storeu_si128(dst as *mut __m128i, r0) };
+        unsafe { _mm_storeu_si128(dst.add(16) as *mut __m128i, r1) };
+        unsafe { _mm_storeu_si128(dst.add(32) as *mut __m128i, r2) };
+        unsafe { _mm_storeu_si128(dst.add(48) as *mut __m128i, r3) };
+
+        src = &src[128..];
+        dst = unsafe { dst.add(64) };
     }
 
-    // --- Small loop: 32 input bytes (16 output bytes) ---
-    let safe_len = len.saturating_sub(31);
-    let src_end = unsafe { input.as_ptr().add(safe_len) };
-    while src < src_end {
-        let v = unsafe { _mm256_loadu_si256(src as *const __m256i) };
-        let (res, err) = decode_hex_vec!(v);
+    while src.len() >= 32 {
+        let v = unsafe { _mm256_loadu_si256(src.as_ptr() as *const __m256i) };
+        let (res, err) = decode_chunk!(v);
 
-        if _mm256_movemask_epi8(err) != 0 {
+        if _mm256_testz_si256(err, err) == 0 {
             return Err(Error::InvalidCharacter);
         }
 
-        unsafe {
-            _mm_storeu_si128(dst as *mut __m128i, res);
-            src = src.add(32);
-            dst = dst.add(16);
-        }
+        unsafe { _mm_storeu_si128(dst as *mut __m128i, res) };
+
+        src = &src[32..];
+        dst = unsafe { dst.add(16) };
     }
 
-    // --- Scalar fallback ---
-    let processed_len = unsafe { src.offset_from(input.as_ptr()) } as usize;
-    if processed_len < len {
-        unsafe { scalar::decode_slice_unsafe(&input[processed_len..], dst)? };
+    if !src.is_empty() {
+        (unsafe { scalar::decode_slice_unsafe(src, dst) })?;
     }
 
     Ok(())

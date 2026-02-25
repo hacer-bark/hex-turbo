@@ -39,6 +39,8 @@ jobs:
             features: "std"
           - name: "simd"
             features: "std,simd"
+          - name: "serde"
+            features: "std,simd,serde"
 
     steps:
       - name: Checkout code

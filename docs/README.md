@@ -1,6 +1,6 @@
 # 📚 Technical Documentation
 
-This directory contains detailed technical reports, formal verification proofs, and architectural decision records for `base64-turbo`.
+This directory contains detailed technical reports, formal verification proofs, and architectural decision records for `hex-turbo`.
 
 ## 📂 Index
 

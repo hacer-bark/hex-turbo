@@ -253,6 +253,7 @@ dependencies = [
  "hex-simd",
  "hex-turbo",
  "rand",
+ "serde",
 ]
 
 [[package]]

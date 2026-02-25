@@ -90,6 +90,12 @@
 #![warn(unused_qualifications)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+// Use `serde` when enabled
+#[cfg(feature = "serde")]
+use ::serde::{Deserialize, Serialize};
+#[cfg(feature = "serde")]
+pub mod serde;
+
 // Scalar implementation
 mod scalar;
 
@@ -104,6 +110,7 @@ mod simd;
 
 /// Errors that can occur during Hex encoding or decoding operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Error {
     /// The input length is invalid for Hex decoding.
     ///
@@ -149,6 +156,7 @@ impl std::error::Error for Error {}
 /// This struct uses `repr(C)` to ensure predictable memory layout.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub(crate) struct Config {
     pub uppercase: bool,
 }
@@ -177,6 +185,7 @@ pub(crate) struct Config {
 /// # }
 /// ```
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Engine {
     pub(crate) config: Config,
 }
