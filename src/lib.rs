@@ -1,7 +1,7 @@
 //! # Hex Turbo
 //! 
 //! [![Crates.io](https://img.shields.io/crates/v/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
-//! [![Documentation](https://docs.rs/hex-turbo/badge.svg)](https://docs.rs/base64-turbo)
+//! [![Documentation](https://docs.rs/hex-turbo/badge.svg)](https://docs.rs/hex-turbo)
 //! [![License](https://img.shields.io/crates/l/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
 //! [![Kani Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/verification.yml?label=Kani%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/verification.yml)
 //! [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/miri.yml?label=MIRI%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/miri.yml)
@@ -362,7 +362,7 @@ impl Engine {
 
         // 3. Set length immediately
         // SAFETY: We are about to overwrite the entire buffer in `encode_into`.
-        // We require a valid `&mut [u8]` slice for the internal logic (especially Rayon) to work.
+        // We require a valid `&mut [u8]` slice for the internal logic to work.
         // Since `encode_into` guarantees it writes exactly `len` bytes or fails (and we panic on fail),
         // we won't expose uninitialized memory.
         #[allow(clippy::uninit_vec)]

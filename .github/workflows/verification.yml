@@ -5,8 +5,18 @@ on:
     branches: [ "main" ]
     tags-ignore:
       - '**'
+    paths:
+      - '**.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/verification.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - '**.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/verification.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -14,23 +24,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_BUILD_JOBS: 2
 
 jobs:
   kani-proofs:
     name: Kani Model Checker
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Run Kani
       - name: Run Kani
-        uses: model-checking/kani-github-action@v1.1
+        uses: model-checking/kani-github-action@v1
         with:
-          args: '--jobs 2 --output-format=terse --unstable stubbing'
-
-      # Cleanup
-      - name: Cleanup Artifacts
-        if: always()
-        run: cargo clean
+          args: '--jobs 4 --output-format=terse --unstable stubbing'
