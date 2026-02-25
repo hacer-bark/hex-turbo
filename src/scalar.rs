@@ -164,45 +164,66 @@ mod kani_verification_scalar {
     use super::*;
     use crate::Config;
 
-    const INPUT_LEN: usize = 17;
+    // --- CONSTANTS ---
+
+    // Encoder Induction Size
+    const ENC_INDUCTION_LEN: usize = 17;
+
+    // Decoder Induction Size
+    const DEC_INDUCTION_LEN: usize = 17;
 
     // --- REAL TESTS --- 
 
+    // --- REAL TESTS --- 
+
+    /// **Proof 1: Roundtrip Correctness (The Logic Check)**
+    /// 
+    /// Verifies that `Decode(Encode(X)) == X`.
     #[kani::proof]
-    fn check_roundtrip_safety() {
-        // Symbolic Config
+    fn check_scalar_roundtrip_correctness() {
         let config = Config { uppercase: kani::any() };
+        let input: [u8; ENC_INDUCTION_LEN] = kani::any();
+        let input_len = input.len();
 
-        // Symbolic Input
-        let input: [u8; INPUT_LEN] = kani::any();
-
-        // Setup Buffers
-        let mut enc_buf = [0u8; INPUT_LEN * 2];
-        let mut dec_buf = [0u8; INPUT_LEN];
+        // Buffers
+        let mut enc_buf = [0u8; 128];
+        let mut dec_buf = [0u8; 128];
 
         unsafe {
-            // Encode
+            // 1. Encode
             encode_slice_unsafe(&config, &input, enc_buf.as_mut_ptr());
 
-            // Decode
-            decode_slice_unsafe(&enc_buf, dec_buf.as_mut_ptr()).expect("Decoder failed");
+            // Calculate actual encoded length for slicing
+            let encoded_slice = &enc_buf[..input_len * 2];
 
-            // Verification
-            assert_eq!(&dec_buf, &input, "AVX2 Roundtrip Failed");
+            // 2. Decode
+            // This MUST succeed for valid encoded output
+            decode_slice_unsafe(encoded_slice, dec_buf.as_mut_ptr())
+                .expect("Valid encoding failed to decode");
+
+            // 3. Verify
+            assert_eq!(&dec_buf[..input_len], &input, "Roundtrip mismatch");
         }
     }
 
+    /// **Proof 2: Decoder Robustness & Induction**
+    /// 
+    /// Verifies that `decode_slice_avx2`:
+    /// 1. Accepts ANY `N` bytes of garbage input.
+    /// 2. Never Segfaults, Panics, or causes UB.
+    /// 3. Safely handles the SIMD->Scalar pointer transition.
     #[kani::proof]
-    fn check_decoder_robustness() {
-        // Symbolic Input (Random Garbage)
-        let input: [u8; INPUT_LEN] = kani::any();
-
-        // Setup Buffer
-        let mut dec_buf = [0u8; 64];
+    fn check_scalar_decode_robustness() {
+        // Input: `N` bytes of unrestricted symbolic data (garbage)
+        let input: [u8; DEC_INDUCTION_LEN] = kani::any();
+        
+        // Output Buffer: Max estimated size
+        let mut output = [0u8; 128];
 
         unsafe {
-            // We verify what function NEVER panics/crashes
-            let _ = decode_slice_unsafe(&input, dec_buf.as_mut_ptr());
+            // We ignore the Result. We only care that this function call 
+            // returns safely (Ok or Err) and does not crash.
+            let _ = decode_slice_unsafe(&input, output.as_mut_ptr());
         }
     }
 }

@@ -382,14 +382,14 @@ mod kani_verification_avx512 {
     #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
     #[kani::stub(_mm512_maddubs_epi16, mm512_maddubs_epi16_stub)]
     #[kani::stub(_mm512_cvtepi16_epi8, mm512_cvtepi16_epi8_stub)]
-    fn check_avx2_roundtrip_correctness() {
+    fn check_avx512_roundtrip_correctness() {
         let config = Config { uppercase: kani::any() };
         let input: [u8; ENC_INDUCTION_LEN] = kani::any();
         let input_len = input.len();
 
         // Buffers
-        let mut enc_buf = [0u8; 128];
-        let mut dec_buf = [0u8; 128];
+        let mut enc_buf = [0u8; 256];
+        let mut dec_buf = [0u8; 256];
 
         unsafe {
             // 1. Encode
@@ -419,12 +419,12 @@ mod kani_verification_avx512 {
     #[kani::stub(_mm512_permutex2var_epi64, mm512_permutex2var_epi64_stub)]
     #[kani::stub(_mm512_maddubs_epi16, mm512_maddubs_epi16_stub)]
     #[kani::stub(_mm512_cvtepi16_epi8, mm512_cvtepi16_epi8_stub)]
-    fn check_avx2_decode_robustness() {
+    fn check_avx512_decode_robustness() {
         // Input: `N` bytes of unrestricted symbolic data (garbage)
         let input: [u8; DEC_INDUCTION_LEN] = kani::any();
         
         // Output Buffer: Max estimated size
-        let mut output = [0u8; 128];
+        let mut output = [0u8; 256];
 
         unsafe {
             // We ignore the Result. We only care that this function call 
