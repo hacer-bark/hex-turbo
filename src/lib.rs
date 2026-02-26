@@ -68,6 +68,7 @@
 //! |---------|---------|-------------|
 //! | **`std`** | **Yes** | Enables `String` and `Vec` support. Disable this for `no_std` environments. |
 //! | **`simd`** | **Yes** | Enables runtime detection for **AVX512**, **AVX2** intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic automatically. |
+//! | **`serde`** | **No** | Enables support for serde and adds `hex_turbo::serde` functions. |
 //! | **`unstable`** | **No** | Enables access to the raw, unsafe internal functions (e.g. `encode_avx2`). |
 //! 
 //! ## Safety & Verification
@@ -166,7 +167,7 @@ pub(crate) struct Config {
 /// This struct holds the configuration for encoding/decoding.
 /// It is designed to be immutable and thread-safe.
 /// 
-/// # Examples
+/// ## Examples
 /// 
 /// ```rust
 /// # #[cfg(feature = "std")]
@@ -213,7 +214,7 @@ impl Engine {
     /// 
     /// This method computes the size of encoded data.
     /// 
-    /// # Examples
+    /// ## Examples
     /// 
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -227,7 +228,7 @@ impl Engine {
 
     /// Calculates the **exact** buffer size required to decode `input_len` bytes.
     /// 
-    /// # Examples
+    /// ## Examples
     /// 
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -249,17 +250,17 @@ impl Engine {
     /// This is a "Zero-Allocation" API designed for hot paths. It writes directly
     /// into the destination slice without creating intermediate `Vec`.
     /// 
-    /// # Arguments
+    /// ## Arguments
     /// 
     /// * `input`: The binary data to encode.
     /// * `output`: A mutable slice to write the Hex string into.
     /// 
-    /// # Returns
+    /// ## Returns
     /// 
     /// * `Ok(usize)`: The number of bytes written to `output`.
     /// * `Err(Error::BufferTooSmall)`: If `output.len()` is less than [`encoded_len`](Self::encoded_len).
     /// 
-    /// # Examples
+    /// ## Examples
     /// 
     /// ```rust
     /// # #[cfg(feature = "std")]
@@ -297,12 +298,12 @@ impl Engine {
 
     /// Decodes `input` into the provided `output` buffer.
     ///
-    /// # Returns
+    /// ## Returns
     ///
     /// * `Ok(usize)`: The number of bytes written to `output`.
     /// * `Err(Error)`: If the input is invalid or the buffer is too small.
     /// 
-    /// # Examples
+    /// ## Examples
     /// 
     /// ```rust
     /// # #[cfg(feature = "std")]
@@ -322,6 +323,8 @@ impl Engine {
     /// assert_eq!(buff, data);
     /// # }
     /// ```
+    /// 
+    /// **Note**: Input hex can be uppercase or lowercase.
     #[inline]
     pub fn decode_into<T: AsRef<[u8]> + Sync>(
         &self,
@@ -351,7 +354,7 @@ impl Engine {
     ///
     /// This is the most convenient method for general usage.
     ///
-    /// # Examples
+    /// ## Examples
     ///
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -389,16 +392,18 @@ impl Engine {
 
     /// Allocates a new `Vec<u8>` and decodes the input data into it.
     ///
-    /// # Errors
+    /// ## Errors
     /// Returns `Error` if the input contains invalid characters or has an invalid length.
     ///
-    /// # Examples
+    /// ## Examples
     ///
     /// ```
     /// use hex_turbo::LOWER_CASE;
     /// let bytes = LOWER_CASE.decode("68656c6c6f").unwrap();
     /// assert_eq!(bytes, b"hello");
     /// ```
+    /// 
+    /// **Note**: Input hex can be uppercase or lowercase.
     #[inline]
     #[cfg(feature = "std")]
     pub fn decode<T: AsRef<[u8]> + Sync>(&self, input: T) -> Result<Vec<u8>, Error> {
@@ -491,4 +496,25 @@ impl Engine {
         // Fallback: Scalar / Non-x86 / Short inputs
         unsafe { scalar::decode_slice_unsafe(input, dst) }
     }
+}
+
+// ========================================================================
+// Simple API
+// ========================================================================
+
+/// Simplified API which calls to `LOWER_CASE.encode(data)`
+pub fn encode<T: AsRef<[u8]> + Sync>(data: T) -> String {
+    LOWER_CASE.encode(data)
+}
+
+/// Simplified API which calls to `UPPER_CASE.encode(data)`
+pub fn encode_upper<T: AsRef<[u8]> + Sync>(data: T) -> String {
+    UPPER_CASE.encode(data)
+}
+
+/// Simplified API which calls to `LOWER_CASE.decode(data)`
+/// 
+/// **Note**: Input hex can be uppercase or lowercase.
+pub fn decode<T: AsRef<[u8]> + Sync>(data: T) -> Result<Vec<u8>, Error> {
+    LOWER_CASE.decode(data)
 }

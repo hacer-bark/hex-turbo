@@ -46,7 +46,7 @@ fn bench_comparison(c: &mut Criterion) {
     group.noise_threshold(0.05);
     group.sample_size(50);
 
-    let sizes = [16, 32, 64, 128, 256, 512, 1024, 2 * 1024, 4 * 1024, 8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024];
+    let sizes = [32, 64, 256, 512, 1024, 4 * 1024, 16 * 1024, 64 * 1024, 128 * 1024];
 
     for size in sizes.iter() {
         let input_data = generate_random_data(*size);
@@ -92,7 +92,7 @@ fn bench_comparison(c: &mut Criterion) {
         // 4. Hex-SIMD (zero-allocation via append + truncate)
         if should_run("simd") {
             let mut output_buffer = vec![0u8; 0];
-            output_buffer.reserve(*size * 2); // Pre-reserve to avoid reallocs
+            output_buffer.reserve(*size * 2);
             group.bench_with_input(BenchmarkId::new("Encode/SimdBuff", size), &input_data, |b, d| {
                 b.iter(|| {
                     output_buffer.truncate(0);
@@ -144,7 +144,7 @@ fn bench_comparison(c: &mut Criterion) {
         // 4. Hex-SIMD (zero-allocation via append + truncate)
         if should_run("simd") {
             let mut output_buffer = vec![0u8; 0];
-            output_buffer.reserve(*size); // Pre-reserve to avoid reallocs
+            output_buffer.reserve(*size);
             group.bench_with_input(BenchmarkId::new("Decode/SimdBuff", size), &encoded_str, |b, s| {
                 b.iter(|| {
                     output_buffer.truncate(0);
