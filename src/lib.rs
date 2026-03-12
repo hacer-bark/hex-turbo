@@ -276,7 +276,7 @@ impl Engine {
     /// # }
     /// ```
     #[inline]
-    pub fn encode_into<T: AsRef<[u8]> + Sync>(
+    pub fn encode_into<T: AsRef<[u8]>>(
         &self,
         input: T,
         output: &mut [u8],
@@ -326,7 +326,7 @@ impl Engine {
     /// 
     /// **Note**: Input hex can be uppercase or lowercase.
     #[inline]
-    pub fn decode_into<T: AsRef<[u8]> + Sync>(
+    pub fn decode_into<T: AsRef<[u8]>>(
         &self,
         input: T,
         output: &mut [u8],
@@ -363,7 +363,7 @@ impl Engine {
     /// ```
     #[inline]
     #[cfg(feature = "std")]
-    pub fn encode<T: AsRef<[u8]> + Sync>(&self, input: T) -> String {
+    pub fn encode<T: AsRef<[u8]>>(&self, input: T) -> String {
         let input = input.as_ref();
 
         // 1. Calculate EXACT required size. Hex encoding is deterministic.
@@ -372,22 +372,11 @@ impl Engine {
         // 2. Allocate uninitialized buffer
         let mut out = Vec::with_capacity(len);
 
-        // 3. Set length immediately
-        // SAFETY: We are about to overwrite the entire buffer in `encode_into`.
-        // We require a valid `&mut [u8]` slice for the internal logic to work.
-        // Since `encode_into` guarantees it writes exactly `len` bytes or fails (and we panic on fail),
-        // we won't expose uninitialized memory.
-        #[allow(clippy::uninit_vec)]
-        unsafe { out.set_len(len); }
-
-        // 4. Encode
-        // We trust our `encoded_len` math completely.
-        Self::encode_into(self, input, &mut out).expect("Hex logic error: buffer size mismatch");
-
-        // 5. Convert to String
-        // SAFETY: The Hex alphabet consists strictly of ASCII characters,
-        // which are valid UTF-8.
-        unsafe { String::from_utf8_unchecked(out) }
+        unsafe {
+            Self::encode_dispatch(self, input, out.as_mut_ptr());
+            out.set_len(len);
+            String::from_utf8_unchecked(out)
+        }
     }
 
     /// Allocates a new `Vec<u8>` and decodes the input data into it.
@@ -406,36 +395,23 @@ impl Engine {
     /// **Note**: Input hex can be uppercase or lowercase.
     #[inline]
     #[cfg(feature = "std")]
-    pub fn decode<T: AsRef<[u8]> + Sync>(&self, input: T) -> Result<Vec<u8>, Error> {
+    pub fn decode<T: AsRef<[u8]>>(&self, input: T) -> Result<Vec<u8>, Error> {
         let input = input.as_ref();
 
         // 1. Calculate required size
-        let max_len = Self::decoded_len(self, input.len());
+        let len = Self::decoded_len(self, input.len());
 
         // 2. Allocate buffer
-        let mut out = Vec::with_capacity(max_len);
+        let mut out = Vec::with_capacity(len);
 
-        // 3. Set length to MAX
-        // SAFETY: We temporarily expose uninitialized memory to the `decode_into` function
-        // so it can write into the slice. We strictly sanitize the length in step 5.
-        #[allow(clippy::uninit_vec)]
-        unsafe { out.set_len(max_len); }
-
-        // 4. Decode
-        // `decode_into` handles parallel/serial dispatch and returns the `actual_len`.
-        match Self::decode_into(self, input, &mut out) {
-            Ok(actual_len) => {
-                // 5. Shrink to fit the real data
-                // SAFETY: `decode_into` reported it successfully wrote `actual_len` valid bytes.
-                // We truncate the Vec to this length, discarding any trailing garbage/uninitialized memory.
-                unsafe { out.set_len(actual_len); }
+        // 3. Decode
+        match unsafe { Self::decode_dispatch(self, input, out.as_mut_ptr()) } {
+            Ok(_) => {
+                // 4. Shrink to fit the real data
+                unsafe { out.set_len(len); }
                 Ok(out)
             }
             Err(e) => {
-                // SAFETY: If an error occurred, we force the length to 0.
-                // This prevents the caller from accidentally inspecting uninitialized memory
-                // if they were to (incorrectly) reuse the Vec from a partial result.
-                unsafe { out.set_len(0); }
                 Err(e)
             }
         }
@@ -503,18 +479,18 @@ impl Engine {
 // ========================================================================
 
 /// Simplified API which calls to `LOWER_CASE.encode(data)`
-pub fn encode<T: AsRef<[u8]> + Sync>(data: T) -> String {
+pub fn encode<T: AsRef<[u8]>>(data: T) -> String {
     LOWER_CASE.encode(data)
 }
 
 /// Simplified API which calls to `UPPER_CASE.encode(data)`
-pub fn encode_upper<T: AsRef<[u8]> + Sync>(data: T) -> String {
+pub fn encode_upper<T: AsRef<[u8]>>(data: T) -> String {
     UPPER_CASE.encode(data)
 }
 
 /// Simplified API which calls to `LOWER_CASE.decode(data)`
 /// 
 /// **Note**: Input hex can be uppercase or lowercase.
-pub fn decode<T: AsRef<[u8]> + Sync>(data: T) -> Result<Vec<u8>, Error> {
+pub fn decode<T: AsRef<[u8]>>(data: T) -> Result<Vec<u8>, Error> {
     LOWER_CASE.decode(data)
 }
