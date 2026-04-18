@@ -8,10 +8,12 @@
 //! 
 //! **The fastest memory-safe Hex implementation.**
 //! 
-//! `hex-turbo` is a production-grade library engineered for high-throughput systems where CPU cycles are scarce and Undefined Behavior (UB) is unacceptable.
+//! `hex-turbo` is a production-grade library engineered for **High Frequency Trading (HFT)**, **Mission-Critical Servers**, and **Embedded Systems** where CPU cycles are scarce and Undefined Behavior (UB) is unacceptable.
 //! 
-//! This crate provides runtime CPU detection to utilize **AVX512**, **AVX2** intrinsics.
+//! This crate provides runtime CPU detection to utilize **AVX512** and **AVX2** intrinsics.
 //! It includes a highly optimized scalar fallback for non-SIMD targets and supports `no_std` environments.
+//! 
+//! > ⚠️ **Minimum Supported Rust Version (MSRV):** This crate requires **Rust 1.89.0 or newer** due to reliance on stabilized AVX512 intrinsics in the standard library.
 //! 
 //! ## Usage
 //! 
@@ -67,7 +69,7 @@
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
 //! | **`std`** | **Yes** | Enables `String` and `Vec` support. Disable this for `no_std` environments. |
-//! | **`simd`** | **Yes** | Enables runtime detection for **AVX512**, **AVX2** intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic automatically. |
+//! | **`simd`** | **Yes** | Enables runtime detection for **AVX512** and **AVX2** intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic. |
 //! | **`serde`** | **No** | Enables support for serde and adds `hex_turbo::serde` functions. |
 //! | **`unstable`** | **No** | Enables access to the raw, unsafe internal functions (e.g. `encode_avx2`). |
 //! 
@@ -76,10 +78,10 @@
 //! This crate utilizes `unsafe` code for SIMD intrinsics and pointer arithmetic to achieve maximum performance.
 //! To ensure safety, we employ a "Swiss Cheese" model of verification layers:
 //! 
-//! *   **Formal Verification (Kani):** Mathematical proofs ensure the kernels never read out of bounds or panic on any input (0..∞ bytes).
-//! *   **MIRI Audited:** All SIMD paths (AVX512, AVX2) and Scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI to ensure strict memory safety.
-//! *   **MemorySanitizer:** The codebase is audited with MSan to prevent logic errors derived from reading uninitialized memory.
-//! *   **Fuzzing:** The codebase is fuzz-tested via `cargo-fuzz` (2.5B+ iterations).
+//! * **Formal Verification (Kani):** Mathematical proofs ensure the kernels never read out of bounds or panic on any input (0..∞ bytes).
+//! * **MIRI Audited:** All SIMD paths (AVX512, AVX2) and Scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI to ensure strict memory safety.
+//! * **MemorySanitizer:** The codebase is audited with MSan to prevent logic errors derived from reading uninitialized memory.
+//! * **Fuzzing:** The codebase is fuzz-tested via `cargo-fuzz` (2.5B+ iterations).
 //! 
 //! **[Learn More](https://github.com/hacer-bark/hex-turbo/blob/main/docs/verification.md)**: Details on our threat model and formal verification strategy.
 

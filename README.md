@@ -134,4 +134,4 @@ We believe in radical transparency. Here is how we stack up against the fastest 
 
 ## License
 
-This project licensed under either the [MIT License](https://github.com/hacer-bark/hex-turbo/blob/main/LICENSE-MIT) or the [Apache License, Version 2.0](https://github.com/hacer-bark/hex-turbo/blob/main/LICENCE-APACHE) at your option.
+This project licensed under either the [MIT License](https://github.com/hacer-bark/hex-turbo/blob/main/LICENSE-MIT) or the [Apache License, Version 2.0](https://github.com/hacer-bark/hex-turbo/blob/main/LICENSE-APACHE) at your option.
