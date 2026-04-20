@@ -8,7 +8,7 @@ use std::env;
 use std::time::Duration;
 
 // 1. The hex-turbo
-use hex_turbo::LOWER_CASE as TURBO_ENGINE;
+use hex_turbo::{LOWER_CASE as TURBO_LOWER, UPPER_CASE as TURBO_UPPER};
 
 // 2. Competitor 1: The standard 'hex' crate
 use hex::{decode as decode_std, encode as encode_std};
@@ -56,19 +56,35 @@ fn bench_comparison(c: &mut Criterion) {
         // ======================================================================
         group.throughput(Throughput::Bytes(*size as u64));
 
-        // 1a. Hex Turbo (Allocating)
-        if should_run("turbo") {
-            group.bench_with_input(BenchmarkId::new("Encode/Turbo", size), &input_data, |b, d| {
-                b.iter(|| TURBO_ENGINE.encode(black_box(d)))
+        // 1a. Hex Turbo (Lower Case - Allocating)
+        if should_run("turbo") || should_run("lower") {
+            group.bench_with_input(BenchmarkId::new("Encode/TurboLower", size), &input_data, |b, d| {
+                b.iter(|| TURBO_LOWER.encode(black_box(d)))
             });
         }
 
-        // 1b. Hex Turbo (Buff / No-Alloc)
-        if should_run("turbo-buff") {
-            let encoded_len = TURBO_ENGINE.encoded_len(*size);
+        // 1b. Hex Turbo (Upper Case - Allocating)
+        if should_run("turbo") || should_run("upper") {
+            group.bench_with_input(BenchmarkId::new("Encode/TurboUpper", size), &input_data, |b, d| {
+                b.iter(|| TURBO_UPPER.encode(black_box(d)))
+            });
+        }
+
+        // 1c. Hex Turbo (Lower Case - Buff / No-Alloc)
+        if should_run("turbo-buff") || should_run("lower-buff") {
+            let encoded_len = TURBO_LOWER.encoded_len(*size);
             let mut output_buffer = vec![0u8; encoded_len];
-            group.bench_with_input(BenchmarkId::new("Encode/TurboBuff", size), &input_data, |b, d| {
-                b.iter(|| TURBO_ENGINE.encode_into(black_box(d), black_box(&mut output_buffer)))
+            group.bench_with_input(BenchmarkId::new("Encode/TurboLowerBuff", size), &input_data, |b, d| {
+                b.iter(|| TURBO_LOWER.encode_into(black_box(d), black_box(&mut output_buffer)))
+            });
+        }
+
+        // 1d. Hex Turbo (Upper Case - Buff / No-Alloc)
+        if should_run("turbo-buff") || should_run("upper-buff") {
+            let encoded_len = TURBO_UPPER.encoded_len(*size);
+            let mut output_buffer = vec![0u8; encoded_len];
+            group.bench_with_input(BenchmarkId::new("Encode/TurboUpperBuff", size), &input_data, |b, d| {
+                b.iter(|| TURBO_UPPER.encode_into(black_box(d), black_box(&mut output_buffer)))
             });
         }
 
@@ -110,16 +126,16 @@ fn bench_comparison(c: &mut Criterion) {
         // 1a. Hex Turbo Decode (Allocating)
         if should_run("turbo") {
             group.bench_with_input(BenchmarkId::new("Decode/Turbo", size), &encoded_str, |b, s| {
-                b.iter(|| TURBO_ENGINE.decode(black_box(s)).unwrap())
+                b.iter(|| TURBO_LOWER.decode(black_box(s)).unwrap())
             });
         }
 
         // 1b. Hex Turbo Decode (Buff / No-Alloc)
         if should_run("turbo-buff") {
-            let decoded_len = TURBO_ENGINE.decoded_len(encoded_str.len());
+            let decoded_len = TURBO_LOWER.decoded_len(encoded_str.len());
             let mut output_buffer = vec![0u8; decoded_len];
             group.bench_with_input(BenchmarkId::new("Decode/TurboBuff", size), &encoded_str, |b, s| {
-                b.iter(|| TURBO_ENGINE.decode_into(black_box(s.as_bytes()), black_box(&mut output_buffer)).unwrap())
+                b.iter(|| TURBO_LOWER.decode_into(black_box(s.as_bytes()), black_box(&mut output_buffer)).unwrap())
             });
         }
 

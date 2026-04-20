@@ -113,16 +113,13 @@ pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Er
             let lo_props = _mm256_shuffle_epi8(lut_lo, lo);
 
             let valid = _mm256_and_si256(hi_props, lo_props);
-            let err = _mm256_cmpeq_epi8(valid, zero);
 
             let offset = _mm256_and_si256(hi_props, mask_0f);
             let nibbles = _mm256_add_epi8(lo, offset);
 
             let pairs = _mm256_maddubs_epi16(nibbles, weights);
-            let low = _mm256_castsi256_si128(pairs);
-            let high = _mm256_extracti128_si256(pairs, 1);
 
-            (_mm_packus_epi16(low, high), err)
+            (pairs, valid)
         }};
     }
 
@@ -134,21 +131,27 @@ pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Er
         let v2 = unsafe { _mm256_loadu_si256(src.as_ptr().add(64) as *const __m256i) };
         let v3 = unsafe { _mm256_loadu_si256(src.as_ptr().add(96) as *const __m256i) };
 
-        let (r0, e0) = decode_chunk!(v0);
-        let (r1, e1) = decode_chunk!(v1);
-        let (r2, e2) = decode_chunk!(v2);
-        let (r3, e3) = decode_chunk!(v3);
+        let (r0, v0_val) = decode_chunk!(v0);
+        let (r1, v1_val) = decode_chunk!(v1);
+        let (r2, v2_val) = decode_chunk!(v2);
+        let (r3, v3_val) = decode_chunk!(v3);
 
-        let err_any = _mm256_or_si256(_mm256_or_si256(e0, e1), _mm256_or_si256(e2, e3));
+        let v01 = _mm256_min_epu8(v0_val, v1_val);
+        let v23 = _mm256_min_epu8(v2_val, v3_val);
+        let valid_all = _mm256_min_epu8(v01, v23);
 
-        if _mm256_testz_si256(err_any, err_any) == 0 {
+        let err = _mm256_cmpeq_epi8(valid_all, zero);
+        if _mm256_movemask_epi8(err) != 0 {
             return Err(Error::InvalidCharacter);
         }
 
-        unsafe { _mm_storeu_si128(dst as *mut __m128i, r0) };
-        unsafe { _mm_storeu_si128(dst.add(16) as *mut __m128i, r1) };
-        unsafe { _mm_storeu_si128(dst.add(32) as *mut __m128i, r2) };
-        unsafe { _mm_storeu_si128(dst.add(48) as *mut __m128i, r3) };
+        let packed01 = _mm256_packus_epi16(r0, r1);
+        let ordered01 = _mm256_permute4x64_epi64(packed01, 0xD8);
+        unsafe { _mm256_storeu_si256(dst as *mut __m256i, ordered01) };
+
+        let packed23 = _mm256_packus_epi16(r2, r3);
+        let ordered23 = _mm256_permute4x64_epi64(packed23, 0xD8);
+        unsafe { _mm256_storeu_si256(dst.add(32) as *mut __m256i, ordered23) };
 
         src = &src[128..];
         dst = unsafe { dst.add(64) };
@@ -156,11 +159,16 @@ pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Er
 
     while src.len() >= 32 {
         let v = unsafe { _mm256_loadu_si256(src.as_ptr() as *const __m256i) };
-        let (res, err) = decode_chunk!(v);
+        let (pairs, valid) = decode_chunk!(v);
 
-        if _mm256_testz_si256(err, err) == 0 {
+        let err = _mm256_cmpeq_epi8(valid, zero);
+        if _mm256_movemask_epi8(err) != 0 {
             return Err(Error::InvalidCharacter);
         }
+
+        let low = _mm256_castsi256_si128(pairs);
+        let high = _mm256_extracti128_si256(pairs, 1);
+        let res = _mm_packus_epi16(low, high);
 
         unsafe { _mm_storeu_si128(dst as *mut __m128i, res) };
 

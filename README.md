@@ -83,9 +83,21 @@ The public API (traits, structs, and error types) is considered **Stable**.
 
 ## Performance
 
-> **TODO: ADD BENCHES**
-> 
-> *Benchmarking data, latency graphs, and throughput comparisons for Hex encoding/decoding will be published here soon.*
+`hex-turbo` is designed to saturate the CPU pipeline. On modern hardware supporting **AVX512**, it achieves throughput near the theoretical limits of the memory controller.
+
+### Cloud / Server (AMD EPYC Genoa)
+*Executed on Zen 4 architecture with AVX512.*
+
+| Operation | Throughput | vs `hex-simd` |
+| :--- | :--- | :--- |
+| **Decoding** | **84.02 GiB/s** | **+137%** (2.3x faster) |
+| **Encoding** | **81.86 GiB/s** | **+51%** (1.5x faster) |
+| **Latency (32B)** | **2.24 ns** | **Lowest in class** |
+
+### Scaling Comparison
+Performance scales linearly across payload sizes, outperforming all other Rust implementations in both raw throughput and small-input latency.
+
+![Benchmark Graph](https://github.com/hacer-bark/hex-turbo/blob/main/benches/img/hex_amd.png?raw=true)
 
 **[See Full Benchmark Reports](https://github.com/hacer-bark/hex-turbo/tree/main/docs/benchmarks)**
 
@@ -110,11 +122,16 @@ Achieving maximum throughput must not cost memory safety. While we leverage `uns
 
 ## Ecosystem Comparison
 
-We believe in radical transparency. Here is how we stack up against the fastest C libraries and other Rust crates.
+`hex-turbo` bridges the gap between the extreme speed of C libraries and the memory safety of Rust.
 
-> **TODO: ADD INFO**
-> 
-> *Detailed ecosystem comparison metrics (throughput, safety guarantees, memory footprint) vs other C/Rust Hex libraries will be added here.*
+| Library | Implementation | Verified | Throughput |
+| :--- | :--- | :---: | :--- |
+| **hex-turbo** | SIMD (AVX512/AVX2) | ✅ | **~84 GiB/s** |
+| [hex-simd](https://crates.io/crates/hex-simd) | SIMD (core::simd) | ❌ | ~35 GiB/s |
+| [faster-hex](https://crates.io/crates/faster-hex) | SIMD (AVX2) | ❌ | ~37 GiB/s |
+| [hex](https://crates.io/crates/hex) | Scalar | ✅ | ~0.8 GiB/s |
+
+**[Read the Full Comparison](./docs/ecosystem_comparison.md)**
 
 ## Feature Flags
 

@@ -39,44 +39,6 @@ const WEIGHTS: [u8; 64] = [
     16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
 ];
 
-// --- MIRI STUBS ---
-
-// STUB: _mm512_permutex2var_epi64
-// REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_permutex2var_epi64
-#[cfg(all(miri, test))]
-fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
-    use core::mem::transmute;
-
-    let a: [u64; 8] = unsafe { transmute(a) };
-    let idx: [u64; 8] = unsafe { transmute(idx) };
-    let b: [u64; 8] = unsafe { transmute(b) };
-    let mut dst = [0u64; 8];
-
-    // FOR j := 0 to 7
-    for j in 0..8 {
-        // i := j*64
-        let i = j;
-        // off := idx[i+2:i]*64
-        let off = (idx[i] & 0x7) as usize;
-        // dst[i+63:i] := idx[i+3] ? b[off+63:off] : a[off+63:off]
-        dst[i] = if (idx[i] >> 3) & 1 != 0 {
-            b[off]
-        } else {
-            a[off]
-        };
-        // ENDFOR
-    }
-    // dst[MAX:512] := 0
-
-    unsafe { transmute(dst) }
-}
-
-#[cfg(not(all(miri, test)))]
-#[target_feature(enable = "avx512f,avx512bw")]
-fn mm512_permutex2var_epi64(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
-    _mm512_permutex2var_epi64(a, idx, b)
-}
-
 // --- ENCODING ---
 
 #[target_feature(enable = "avx512f,avx512bw")]
@@ -93,10 +55,6 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
     };
     let table = unsafe { _mm512_loadu_si512(table_ptr as *const __m512i) };
     let mask_0f = _mm512_set1_epi8(0x0F);
-
-    // Permutation Indices
-    let perm_idx_1 = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
-    let perm_idx_2 = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
 
     macro_rules! encode_vec {
         ($in_vec:expr) => {{
@@ -118,9 +76,12 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
 
     macro_rules! store_128_bytes {
         ($dst:expr, $inter_lo:expr, $inter_hi:expr) => {{
-            // Reorder the data using the permutation indices
-            let ordered_1 = mm512_permutex2var_epi64($inter_lo, perm_idx_1, $inter_hi);
-            let ordered_2 = mm512_permutex2var_epi64($inter_lo, perm_idx_2, $inter_hi);
+            // Reorder the data using 128-bit lane shuffles
+            let tmp1 = _mm512_shuffle_i32x4::<0x44>($inter_lo, $inter_hi);
+            let ordered_1 = _mm512_shuffle_i32x4::<0xD8>(tmp1, tmp1);
+
+            let tmp2 = _mm512_shuffle_i32x4::<0xEE>($inter_lo, $inter_hi);
+            let ordered_2 = _mm512_shuffle_i32x4::<0xD8>(tmp2, tmp2);
 
             unsafe {
                 _mm512_storeu_si512($dst as *mut _, ordered_1);
@@ -129,7 +90,31 @@ pub unsafe fn encode_slice_avx512(config: &Config, input: &[u8], mut dst: *mut u
         }};
     }
 
-    // --- Loop: Process 64 input bytes (128 output bytes) ---
+    // --- Large unrolled loop: 256 input bytes (512 output bytes) ---
+    let limit_256 = (len / 256) * 256;
+    let src_end_256 = unsafe { start_ptr.add(limit_256) };
+
+    while src < src_end_256 {
+        let v0 = unsafe { _mm512_loadu_si512(src as *const __m512i) };
+        let v1 = unsafe { _mm512_loadu_si512(src.add(64) as *const __m512i) };
+        let v2 = unsafe { _mm512_loadu_si512(src.add(128) as *const __m512i) };
+        let v3 = unsafe { _mm512_loadu_si512(src.add(192) as *const __m512i) };
+
+        let (lo0, hi0) = encode_vec!(v0);
+        let (lo1, hi1) = encode_vec!(v1);
+        let (lo2, hi2) = encode_vec!(v2);
+        let (lo3, hi3) = encode_vec!(v3);
+
+        store_128_bytes!(dst, lo0, hi0);
+        store_128_bytes!(dst.add(128), lo1, hi1);
+        store_128_bytes!(dst.add(256), lo2, hi2);
+        store_128_bytes!(dst.add(384), lo3, hi3);
+
+        src = unsafe { src.add(256) };
+        dst = unsafe { dst.add(512) };
+    }
+
+    // --- Small loop: 64 input bytes (128 output bytes) ---
     let limit_64 = (len / 64) * 64;
     let src_end_64 = unsafe { start_ptr.add(limit_64) };
 

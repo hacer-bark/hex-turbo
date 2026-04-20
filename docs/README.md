@@ -25,7 +25,7 @@ This directory contains detailed technical reports, formal verification proofs, 
 ### ⚖️ [Ecosystem Comparison](ecosystem_comparison.md)
 **Target Audience:** Architects, CTOs
 *   **Rust vs C:** Detailed breakdown of why C libraries are faster but riskier.
-*   **Competitor Analysis:** Feature matrix comparing `base64-turbo` against `base64-simd`, `base64` (std), and `Turbo-Base64`.
+*   **Competitor Analysis:** Feature matrix comparing `hex-turbo` against `hex-simd`, `hex` (std), and `Turbo-Hex`.
 *   **Alternatives:** When to use other libraries (e.g., for custom alphabets or WASM).
 
 ### ❓ [Frequently Asked Questions (FAQ)](faq.md)
