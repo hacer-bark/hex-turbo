@@ -1,4 +1,4 @@
-use crate::{Error, Config, scalar};
+use crate::{Config, Error, scalar};
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
@@ -9,47 +9,47 @@ use std::arch::x86_64::*;
 
 // Duplicated 16-byte tables for AVX2 pshufb (Encoding)
 const HEX_TABLE_UPPER: [u8; 32] = [
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
-    b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
-    b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
 ];
 
 const HEX_TABLE_LOWER: [u8; 32] = [
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
-    b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
-    b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
 ];
 
 // Duplicated 16-byte LUTs and weights for AVX2 (Decoding)
 const LUT_HI: [u8; 32] = [
-    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 73, 0, 73, 0, 0, 0, 0, 0, 0,
+    0, 0, 0,
 ];
 const LUT_LO: [u8; 32] = [
-    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
-    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
+    128, 192, 192, 192, 192, 192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0, 128, 192, 192, 192, 192,
+    192, 192, 128, 128, 128, 0, 0, 0, 0, 0, 0,
 ];
 const WEIGHTS: [u8; 32] = [
-    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
-    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1,
+    16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16, 1, 16,
+    1, 16, 1, 16, 1,
 ];
 
 // --- ENCODING ---
 
 #[target_feature(enable = "avx2")]
 pub unsafe fn encode_slice_avx2(config: &Config, input: &[u8], mut dst: *mut u8) {
-    let table_ptr = if config.uppercase { HEX_TABLE_UPPER.as_ptr() } else { HEX_TABLE_LOWER.as_ptr() };
+    let table_ptr = if config.uppercase {
+        HEX_TABLE_UPPER.as_ptr()
+    } else {
+        HEX_TABLE_LOWER.as_ptr()
+    };
     let table = unsafe { _mm256_loadu_si256(table_ptr as *const __m256i) };
     let mask_0f = _mm256_set1_epi8(0x0F);
 
     macro_rules! encode_chunk {
         ($in_vec:expr, $dst_ptr:expr) => {{
-            let low_idx  = _mm256_and_si256($in_vec, mask_0f);
+            let low_idx = _mm256_and_si256($in_vec, mask_0f);
             let high_idx = _mm256_and_si256(_mm256_srli_epi16($in_vec, 4), mask_0f);
 
-            let low_chars  = _mm256_shuffle_epi8(table, low_idx);
+            let low_chars = _mm256_shuffle_epi8(table, low_idx);
             let high_chars = _mm256_shuffle_epi8(table, high_idx);
 
             let inter_lo = _mm256_unpacklo_epi8(high_chars, low_chars);
@@ -140,7 +140,7 @@ pub unsafe fn decode_slice_avx2(input: &[u8], mut dst: *mut u8) -> Result<(), Er
         let (r3, e3) = decode_chunk!(v3);
 
         let err_any = _mm256_or_si256(_mm256_or_si256(e0, e1), _mm256_or_si256(e2, e3));
-        
+
         if _mm256_testz_si256(err_any, err_any) == 0 {
             return Err(Error::InvalidCharacter);
         }
@@ -195,8 +195,7 @@ mod kani_verification_avx2 {
 
     // STUB: _mm256_shuffle_epi8
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_shuffle_epi8
-    #[allow(dead_code)]
-    unsafe fn mm256_shuffle_epi8_stub(a: __m256i, b: __m256i) -> __m256i {
+    unsafe fn _mm256_shuffle_epi8_stub(a: __m256i, b: __m256i) -> __m256i {
         let a: [u8; 32] = unsafe { transmute(a) };
         let b: [u8; 32] = unsafe { transmute(b) };
         let mut dst = [0u8; 32];
@@ -241,8 +240,7 @@ mod kani_verification_avx2 {
 
     // STUB: _mm256_maddubs_epi16
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_maddubs_epi16
-    #[allow(dead_code)]
-    unsafe fn mm256_maddubs_epi16_stub(a: __m256i, b: __m256i) -> __m256i {
+    unsafe fn _mm256_maddubs_epi16_stub(a: __m256i, b: __m256i) -> __m256i {
         let a: [u8; 32] = unsafe { transmute(a) };
         let b: [i8; 32] = unsafe { transmute(b) };
         let mut dst = [0i16; 16];
@@ -253,7 +251,8 @@ mod kani_verification_avx2 {
             let i = j * 2;
 
             // dst[i+15:i] := Saturate16( a[i+15:i+8]*b[i+15:i+8] + a[i+7:i]*b[i+7:i] )
-            dst[j] = ((a[i+1] as i16) * (b[i+1] as i16)).saturating_add((a[i] as i16) * (b[i] as i16));
+            dst[j] = ((a[i + 1] as i16) * (b[i + 1] as i16))
+                .saturating_add((a[i] as i16) * (b[i] as i16));
         }
         // ENDFOR
 
@@ -265,20 +264,14 @@ mod kani_verification_avx2 {
     // STUB: _mm256_testz_si256
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm256_testz_si256
     // Note: in this logic added complexity as Rust do not support 256 bits values.
-    #[allow(dead_code)]
-    unsafe fn mm256_testz_si256_stub(a: __m256i, b: __m256i) -> i32 {
+    unsafe fn _mm256_testz_si256_stub(a: __m256i, b: __m256i) -> i32 {
         let a: [u64; 4] = unsafe { transmute(a) };
         let b: [u64; 4] = unsafe { transmute(b) };
         let zf: i32;
         let _cf: i32;
 
         // Perform 256 bit AND
-        let res_and = [
-            a[0] & b[0],
-            a[1] & b[1],
-            a[2] & b[2],
-            a[3] & b[3],
-        ];
+        let res_and = [a[0] & b[0], a[1] & b[1], a[2] & b[2], a[3] & b[3]];
 
         // IF ((a[255:0] AND b[255:0]) == 0)
         if res_and[0] == 0 && res_and[1] == 0 && res_and[2] == 0 && res_and[3] == 0 {
@@ -299,7 +292,8 @@ mod kani_verification_avx2 {
         ];
 
         // IF (((NOT a[255:0]) AND b[255:0]) == 0)
-        if res_not_and[0] == 0 && res_not_and[1] == 0 && res_not_and[2] == 0 && res_not_and[3] == 0 {
+        if res_not_and[0] == 0 && res_not_and[1] == 0 && res_not_and[2] == 0 && res_not_and[3] == 0
+        {
             // CF := 1
             _cf = 1;
         } else {
@@ -314,8 +308,7 @@ mod kani_verification_avx2 {
 
     // STUB: _mm_packus_epi16
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm_packus_epi16
-    #[allow(dead_code)]
-    unsafe fn mm_packus_epi16_stub(a: __m128i, b: __m128i) -> __m128i {
+    unsafe fn _mm_packus_epi16_stub(a: __m128i, b: __m128i) -> __m128i {
         let a: [i16; 8] = unsafe { transmute(a) };
         let b: [i16; 8] = unsafe { transmute(b) };
         let mut dst = [0u8; 16];
@@ -356,18 +349,20 @@ mod kani_verification_avx2 {
         unsafe { transmute(dst) }
     }
 
-    // --- REAL TESTS --- 
+    // --- REAL TESTS ---
 
     /// **Proof 1: Roundtrip Correctness (The Logic Check)**
-    /// 
+    ///
     /// Verifies that `Decode(Encode(X)) == X`.
     #[kani::proof]
-    #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
-    #[kani::stub(_mm256_maddubs_epi16, mm256_maddubs_epi16_stub)]
-    #[kani::stub(_mm256_testz_si256, mm256_testz_si256_stub)]
-    #[kani::stub(_mm_packus_epi16, mm_packus_epi16_stub)]
+    #[kani::stub(_mm256_shuffle_epi8, _mm256_shuffle_epi8_stub)]
+    #[kani::stub(_mm256_maddubs_epi16, _mm256_maddubs_epi16_stub)]
+    #[kani::stub(_mm256_testz_si256, _mm256_testz_si256_stub)]
+    #[kani::stub(_mm_packus_epi16, _mm_packus_epi16_stub)]
     fn check_avx2_roundtrip_correctness() {
-        let config = Config { uppercase: kani::any() };
+        let config = Config {
+            uppercase: kani::any(),
+        };
         let input: [u8; ENC_INDUCTION_LEN] = kani::any();
         let input_len = input.len();
 
@@ -393,25 +388,25 @@ mod kani_verification_avx2 {
     }
 
     /// **Proof 2: Decoder Robustness & Induction**
-    /// 
+    ///
     /// Verifies that `decode_slice_avx2`:
     /// 1. Accepts ANY `N` bytes of garbage input.
     /// 2. Never Segfaults, Panics, or causes UB.
     /// 3. Safely handles the SIMD->Scalar pointer transition.
     #[kani::proof]
-    #[kani::stub(_mm256_shuffle_epi8, mm256_shuffle_epi8_stub)]
-    #[kani::stub(_mm256_maddubs_epi16, mm256_maddubs_epi16_stub)]
-    #[kani::stub(_mm256_testz_si256, mm256_testz_si256_stub)]
-    #[kani::stub(_mm_packus_epi16, mm_packus_epi16_stub)]
+    #[kani::stub(_mm256_shuffle_epi8, _mm256_shuffle_epi8_stub)]
+    #[kani::stub(_mm256_maddubs_epi16, _mm256_maddubs_epi16_stub)]
+    #[kani::stub(_mm256_testz_si256, _mm256_testz_si256_stub)]
+    #[kani::stub(_mm_packus_epi16, _mm_packus_epi16_stub)]
     fn check_avx2_decode_robustness() {
         // Input: `N` bytes of unrestricted symbolic data (garbage)
         let input: [u8; DEC_INDUCTION_LEN] = kani::any();
-        
+
         // Output Buffer: Max estimated size
         let mut output = [0u8; 128];
 
         unsafe {
-            // We ignore the Result. We only care that this function call 
+            // We ignore the Result. We only care that this function call
             // returns safely (Ok or Err) and does not crash.
             let _ = decode_slice_avx2(&input, output.as_mut_ptr());
         }
@@ -422,11 +417,11 @@ mod kani_verification_avx2 {
 
 #[cfg(all(test, miri))]
 mod avx2_miri_tests {
-    use super::{encode_slice_avx2, decode_slice_avx2};
+    use super::{decode_slice_avx2, encode_slice_avx2};
     use crate::{Config, Error};
 
     // Reference crate
-    use hex::{encode as ref_encode_lower};
+    use hex::encode as ref_encode_lower;
 
     // --- Fast Deterministic Generator ---
     // Generating random numbers in Miri is extremely slow.
@@ -448,15 +443,22 @@ mod avx2_miri_tests {
         };
 
         let mut enc_buf = vec![0u8; len * 2];
-        unsafe { encode_slice_avx2(config, input, enc_buf.as_mut_ptr()); }
+        unsafe {
+            encode_slice_avx2(config, input, enc_buf.as_mut_ptr());
+        }
 
-        assert_eq!(&enc_buf[..], expected.as_bytes(), "AVX2 Encoding mismatch (len={})", len);
+        assert_eq!(
+            &enc_buf[..],
+            expected.as_bytes(),
+            "AVX2 Encoding mismatch (len={})",
+            len
+        );
 
         // --- Decoding (own output) ---
         let mut dec_buf = vec![0u8; len];
-        unsafe { 
+        unsafe {
             decode_slice_avx2(&enc_buf, dec_buf.as_mut_ptr())
-                .expect("AVX2 decoder failed on valid own output") 
+                .expect("AVX2 decoder failed on valid own output")
         };
 
         assert_eq!(&dec_buf[..], input, "AVX2 round-trip failed (len={})", len);
@@ -465,7 +467,7 @@ mod avx2_miri_tests {
     fn run_avx2_tests(uppercase: bool) {
         let config = Config { uppercase };
 
-        // MIRI is slow. We don't need random lengths. 
+        // MIRI is slow. We don't need random lengths.
         // We only need to test boundary conditions to achieve 100% path coverage.
         // 0..16: Scalar tails
         // 32: AVX2 boundaries (AVX2 processes 32 bytes / 64 hex chars per chunk)
@@ -493,18 +495,26 @@ mod avx2_miri_tests {
     #[test]
     fn miri_avx2_decode_mixed_case() {
         // 64 length ensures we trigger exactly 2 full AVX2 loops (64 bytes = 128 hex chars)
-        let input = get_data(64); 
+        let input = get_data(64);
         let hex_lower = ref_encode_lower(&input).into_bytes();
 
         // Deterministically mix case (avoids heavy `rand` in Miri)
-        let mixed_hex: Vec<u8> = hex_lower.into_iter().enumerate().map(|(i, b)| {
-            if i % 2 == 0 { b.to_ascii_uppercase() } else { b }
-        }).collect();
+        let mixed_hex: Vec<u8> = hex_lower
+            .into_iter()
+            .enumerate()
+            .map(|(i, b)| {
+                if i % 2 == 0 {
+                    b.to_ascii_uppercase()
+                } else {
+                    b
+                }
+            })
+            .collect();
 
         let mut dec_buf = vec![0u8; 64];
-        unsafe { 
+        unsafe {
             decode_slice_avx2(&mixed_hex, dec_buf.as_mut_ptr())
-                .expect("AVX2 decoder failed on valid mixed-case input") 
+                .expect("AVX2 decoder failed on valid mixed-case input")
         };
 
         assert_eq!(&dec_buf[..], input);
