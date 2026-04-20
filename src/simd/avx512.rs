@@ -301,6 +301,33 @@ mod kani_verification_avx512 {
         unsafe { transmute(dst) }
     }
 
+    // STUB: _mm512_permutex2var_epi64
+    // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_permutex2var_epi64
+    unsafe fn _mm512_permutex2var_epi64_stub(a: __m512i, idx: __m512i, b: __m512i) -> __m512i {
+        let a: [u64; 8] = unsafe { transmute(a) };
+        let idx: [u64; 8] = unsafe { transmute(idx) };
+        let b: [u64; 8] = unsafe { transmute(b) };
+        let mut dst = [0u64; 8];
+
+        // FOR j := 0 to 7
+        for j in 0..8 {
+            // i := j*64
+            let i = j;
+            // off := idx[i+2:i]*64
+            let off = (idx[i] & 0x7) as usize;
+            // dst[i+63:i] := idx[i+3] ? b[off+63:off] : a[off+63:off]
+            dst[i] = if (idx[i] >> 3) & 1 != 0 {
+                b[off]
+            } else {
+                a[off]
+            };
+            // ENDFOR
+        }
+        // dst[MAX:512] := 0
+
+        unsafe { transmute(dst) }
+    }
+
     // STUB: _mm512_maddubs_epi16
     // REFERENCE: https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html#text=_mm512_maddubs_epi16
     unsafe fn _mm512_maddubs_epi16_stub(a: __m512i, b: __m512i) -> __m512i {
@@ -352,6 +379,7 @@ mod kani_verification_avx512 {
     #[kani::stub(_mm512_shuffle_epi8, _mm512_shuffle_epi8_stub)]
     #[kani::stub(_mm512_maddubs_epi16, _mm512_maddubs_epi16_stub)]
     #[kani::stub(_mm512_cvtepi16_epi8, _mm512_cvtepi16_epi8_stub)]
+    #[kani::stub(_mm512_permutex2var_epi64, _mm512_permutex2var_epi64_stub)]
     fn check_avx512_roundtrip_correctness() {
         let config = Config {
             uppercase: kani::any(),
