@@ -1,10 +1,10 @@
 use criterion::{
-    criterion_group, criterion_main, AxisScale, BenchmarkId, Criterion,
-    PlotConfiguration, Throughput,
+    AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput, criterion_group,
+    criterion_main,
 };
-use std::hint::black_box;
 use rand::RngExt;
 use std::env;
+use std::hint::black_box;
 use std::time::Duration;
 
 // 1. The hex-turbo
@@ -17,7 +17,7 @@ use hex::{decode as decode_std, encode as encode_std};
 use faster_hex::{hex_decode as decode_fast, hex_encode as encode_fast};
 
 // 4. Competitor 3: The 'hex-simd' crate
-use hex_simd::{encode_append, decode_append, AsciiCase};
+use hex_simd::{AsciiCase, decode_append, encode_append};
 
 fn generate_random_data(size: usize) -> Vec<u8> {
     let mut data = vec![0u8; size];
@@ -46,7 +46,17 @@ fn bench_comparison(c: &mut Criterion) {
     group.noise_threshold(0.05);
     group.sample_size(50);
 
-    let sizes = [32, 64, 256, 512, 1024, 4 * 1024, 16 * 1024, 64 * 1024, 128 * 1024];
+    let sizes = [
+        32,
+        64,
+        256,
+        512,
+        1024,
+        4 * 1024,
+        16 * 1024,
+        64 * 1024,
+        128 * 1024,
+    ];
 
     for size in sizes.iter() {
         let input_data = generate_random_data(*size);
@@ -56,36 +66,26 @@ fn bench_comparison(c: &mut Criterion) {
         // ======================================================================
         group.throughput(Throughput::Bytes(*size as u64));
 
-        // 1a. Hex Turbo (Lower Case - Allocating)
-        if should_run("turbo") || should_run("lower") {
-            group.bench_with_input(BenchmarkId::new("Encode/TurboLower", size), &input_data, |b, d| {
-                b.iter(|| TURBO_LOWER.encode(black_box(d)))
-            });
-        }
-
-        // 1b. Hex Turbo (Upper Case - Allocating)
+        // 1a. Hex Turbo (Upper Case - Allocating)
         if should_run("turbo") || should_run("upper") {
-            group.bench_with_input(BenchmarkId::new("Encode/TurboUpper", size), &input_data, |b, d| {
-                b.iter(|| TURBO_UPPER.encode(black_box(d)))
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/Turbo", size),
+                &input_data,
+                |b, d| b.iter(|| TURBO_UPPER.encode(black_box(d))),
+            );
         }
 
-        // 1c. Hex Turbo (Lower Case - Buff / No-Alloc)
-        if should_run("turbo-buff") || should_run("lower-buff") {
-            let encoded_len = TURBO_LOWER.encoded_len(*size);
-            let mut output_buffer = vec![0u8; encoded_len];
-            group.bench_with_input(BenchmarkId::new("Encode/TurboLowerBuff", size), &input_data, |b, d| {
-                b.iter(|| TURBO_LOWER.encode_into(black_box(d), black_box(&mut output_buffer)))
-            });
-        }
-
-        // 1d. Hex Turbo (Upper Case - Buff / No-Alloc)
+        // 1b. Hex Turbo (Upper Case - Buff / No-Alloc)
         if should_run("turbo-buff") || should_run("upper-buff") {
             let encoded_len = TURBO_UPPER.encoded_len(*size);
             let mut output_buffer = vec![0u8; encoded_len];
-            group.bench_with_input(BenchmarkId::new("Encode/TurboUpperBuff", size), &input_data, |b, d| {
-                b.iter(|| TURBO_UPPER.encode_into(black_box(d), black_box(&mut output_buffer)))
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/TurboBuff", size),
+                &input_data,
+                |b, d| {
+                    b.iter(|| TURBO_UPPER.encode_into(black_box(d), black_box(&mut output_buffer)))
+                },
+            );
         }
 
         // 2. Hex Standard (hex crate)
@@ -98,23 +98,35 @@ fn bench_comparison(c: &mut Criterion) {
         // 3. Faster-hex (buffer-only)
         if should_run("fast") {
             let mut output_buffer = vec![0u8; *size * 2];
-            group.bench_with_input(BenchmarkId::new("Encode/FastBuff", size), &input_data, |b, d| {
-                b.iter(|| {
-                    encode_fast(black_box(d), black_box(&mut output_buffer)).unwrap();
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/FastBuff", size),
+                &input_data,
+                |b, d| {
+                    b.iter(|| {
+                        encode_fast(black_box(d), black_box(&mut output_buffer)).unwrap();
+                    })
+                },
+            );
         }
 
         // 4. Hex-SIMD (zero-allocation via append + truncate)
         if should_run("simd") {
             let mut output_buffer = vec![0u8; 0];
             output_buffer.reserve(*size * 2);
-            group.bench_with_input(BenchmarkId::new("Encode/SimdBuff", size), &input_data, |b, d| {
-                b.iter(|| {
-                    output_buffer.truncate(0);
-                    encode_append(black_box(d), black_box(&mut output_buffer), black_box(AsciiCase::Lower));
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/SimdBuff", size),
+                &input_data,
+                |b, d| {
+                    b.iter(|| {
+                        output_buffer.truncate(0);
+                        encode_append(
+                            black_box(d),
+                            black_box(&mut output_buffer),
+                            black_box(AsciiCase::Lower),
+                        );
+                    })
+                },
+            );
         }
 
         // ======================================================================
@@ -125,48 +137,69 @@ fn bench_comparison(c: &mut Criterion) {
 
         // 1a. Hex Turbo Decode (Allocating)
         if should_run("turbo") {
-            group.bench_with_input(BenchmarkId::new("Decode/Turbo", size), &encoded_str, |b, s| {
-                b.iter(|| TURBO_LOWER.decode(black_box(s)).unwrap())
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/Turbo", size),
+                &encoded_str,
+                |b, s| b.iter(|| TURBO_LOWER.decode(black_box(s)).unwrap()),
+            );
         }
 
         // 1b. Hex Turbo Decode (Buff / No-Alloc)
         if should_run("turbo-buff") {
             let decoded_len = TURBO_LOWER.decoded_len(encoded_str.len());
             let mut output_buffer = vec![0u8; decoded_len];
-            group.bench_with_input(BenchmarkId::new("Decode/TurboBuff", size), &encoded_str, |b, s| {
-                b.iter(|| TURBO_LOWER.decode_into(black_box(s.as_bytes()), black_box(&mut output_buffer)).unwrap())
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/TurboBuff", size),
+                &encoded_str,
+                |b, s| {
+                    b.iter(|| {
+                        TURBO_LOWER
+                            .decode_into(black_box(s.as_bytes()), black_box(&mut output_buffer))
+                            .unwrap()
+                    })
+                },
+            );
         }
 
         // 2. Hex Standard Decode (hex crate)
         if should_run("std") {
-            group.bench_with_input(BenchmarkId::new("Decode/Std", size), &encoded_str, |b, s| {
-                b.iter(|| decode_std(black_box(s)).unwrap())
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/Std", size),
+                &encoded_str,
+                |b, s| b.iter(|| decode_std(black_box(s)).unwrap()),
+            );
         }
 
         // 3. Faster-hex Decode (buffer-only)
         if should_run("fast") {
             let decoded_len = encoded_str.len() / 2;
             let mut output_buffer = vec![0u8; decoded_len];
-            group.bench_with_input(BenchmarkId::new("Decode/FastBuff", size), &encoded_str, |b, s| {
-                b.iter(|| {
-                    decode_fast(black_box(s.as_bytes()), black_box(&mut output_buffer)).unwrap();
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/FastBuff", size),
+                &encoded_str,
+                |b, s| {
+                    b.iter(|| {
+                        decode_fast(black_box(s.as_bytes()), black_box(&mut output_buffer))
+                            .unwrap();
+                    })
+                },
+            );
         }
 
         // 4. Hex-SIMD (zero-allocation via append + truncate)
         if should_run("simd") {
             let mut output_buffer = vec![0u8; 0];
             output_buffer.reserve(*size);
-            group.bench_with_input(BenchmarkId::new("Decode/SimdBuff", size), &encoded_str, |b, s| {
-                b.iter(|| {
-                    output_buffer.truncate(0);
-                    decode_append(black_box(s), black_box(&mut output_buffer)).unwrap();
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/SimdBuff", size),
+                &encoded_str,
+                |b, s| {
+                    b.iter(|| {
+                        output_buffer.truncate(0);
+                        decode_append(black_box(s), black_box(&mut output_buffer)).unwrap();
+                    })
+                },
+            );
         }
     }
     group.finish();
