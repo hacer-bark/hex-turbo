@@ -38,7 +38,7 @@ jobs:
           - name: "std"
             features: "std"
           - name: "full"
-            features: "std,simd,serde"
+            features: "std,simd"
 
     steps:
       - name: Checkout code
@@ -72,6 +72,6 @@ jobs:
         run: |
           RUSTFLAGS="-Z sanitizer=memory" cargo test -Z build-std \
             --target x86_64-unknown-linux-gnu \
-            --features "std,simd,serde" \
+            --features "std,simd" \
             --lib \
             --tests

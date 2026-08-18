@@ -5,7 +5,10 @@ edition = "2024"
 rust-version = "1.89"
 description = "The fastest memory-safe Hex engine. Formally verified (Kani/MIRI). Features runtime AVX2/AVX512 detection, zero-allocation API, and robust no_std support."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/hacer-bark/hex-turbo"
+documentation = "https://docs.rs/hex-turbo"
 readme = "README.md"
+build = "build.rs"
 authors = ["Hacer"]
 keywords = ["hex", "simd", "avx512", "performance", "encoding"]
 categories = ["encoding", "hardware-support", "no-std", "web-programming"]
@@ -14,7 +17,6 @@ exclude = [
     ".gitignore",
     "benches/img/*",
     "benches/scripts/*",
-    "docs/*",
 ]
 
 [features]
@@ -22,10 +24,8 @@ default = ["std", "simd"]
 unstable = []
 std = []
 simd = ["std"]
-serde = ["std", "dep:serde"]
 
 [dependencies]
-serde = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 rand = "0.10"
@@ -33,7 +33,6 @@ criterion = { version = "0.8", features = ["html_reports"] }
 hex = "0.4"
 faster-hex = "0.10"
 hex-simd = "0.8"
-hex-turbo = { path = "." }
 
 [[bench]]
 name = "encoding_bench"

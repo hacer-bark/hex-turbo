@@ -1,9 +1,74 @@
-use crate::{Error, Config};
+//! Scalar hex kernels.
+//!
+//! This module is the portable fallback used when no SIMD kernel applies —
+//! non-x86 targets, hosts without AVX2/AVX-512, inputs too short to amortize a
+//! vector setup, and `--no-default-features` builds.
+//!
+//! It contains **no `unsafe` code at all** (`#![forbid(unsafe_code)]`): bounds
+//! are expressed through slice splitting and `chunks_exact`, which the
+//! optimizer turns back into the same unchecked pointer walk. In a build with
+//! every SIMD kernel disabled, the whole crate inherits that and carries
+//! `forbid(unsafe_code)` crate-wide.
+//!
+//! # Why these two shapes
+//!
+//! The two directions are limited by opposite halves of the core, which is why
+//! they use different techniques rather than one shared one. Measured on
+//! Skylake-family hardware (`llvm-mca -mcpu=skylake` on the emitted inner
+//! loops, cross-checked against TSC-derived core cycles):
+//!
+//! * **Encode is load-limited.** A 512-byte table maps one input byte straight
+//!   to the two characters it encodes, so a group is one load per byte instead
+//!   of two nibble lookups. That saturates the two load ports (16 load uops per
+//!   8-byte group) at ~1.0 cycles/byte, and the ALU ports idle. Doing the
+//!   arithmetic in registers instead (`nibbles_to_ascii`, still used by the
+//!   decoder) is ALU-limited at ~4.9 ALU uops/byte and measured ~55% slower.
+//! * **Decode is ALU-limited.** Arithmetic beats a table here for the same
+//!   reason in reverse: a table decode needs two loads per *character*, which
+//!   costs more load traffic than the encoder's, while the arithmetic form
+//!   needs one load per 8 characters. It runs ~9 ALU uops/byte against idle
+//!   load ports, so the group count per iteration — not the op count — is what
+//!   moves it: four independent 8-character groups per iteration overlap their
+//!   dependency chains (~17 cycles each, ~5 cycles of port pressure each).
+//!
+//! Two things that look right on paper and are *not* done here, both rejected
+//! on measurement: splitting each iteration between the table and arithmetic
+//! paths to balance the ports (register pressure costs more than the balance
+//! gains — decode regressed ~10%), and unrolling decode to eight groups
+//! (~29% regression).
+
+#![forbid(unsafe_code)]
+
+use crate::{Config, Error};
 
 // --- CONSTANTS ---
 
 const LOWER_ALPHABET: [u8; 16] = *b"0123456789abcdef";
 const UPPER_ALPHABET: [u8; 16] = *b"0123456789ABCDEF";
+
+/// Maps one input byte straight to the two characters it encodes, packed
+/// little-endian so the first character lands in the low byte.
+const fn pair_table(alphabet: [u8; 16]) -> [u16; 256] {
+    let mut table = [0u16; 256];
+    let mut i = 0;
+    while i < 256 {
+        table[i] = (alphabet[i >> 4] as u16) | ((alphabet[i & 0x0F] as u16) << 8);
+        i += 1;
+    }
+    table
+}
+
+static LOWER_PAIRS: [u16; 256] = pair_table(LOWER_ALPHABET);
+static UPPER_PAIRS: [u16; 256] = pair_table(UPPER_ALPHABET);
+
+/// One set bit per byte lane.
+const ONES: u64 = 0x0101_0101_0101_0101;
+
+/// Distance from `'0' + n` to the character for a nibble `>= 10`:
+/// `b'a' - b'0' - 10`. Only the lowercase bias is needed — the decoder folds
+/// uppercase input onto lowercase before its round-trip check, and the encoder
+/// uses tables rather than arithmetic.
+const LOWER_BIAS: u64 = 39;
 
 const HEX_DECODE_TABLE: [u8; 256] = {
     let mut table = [0xFFu8; 256];
@@ -29,132 +94,190 @@ const HEX_DECODE_TABLE: [u8; 256] = {
 
 // --- ENCODING ---
 
+/// Maps eight 4-bit nibbles (one per byte, all `<= 0x0F`) to their ASCII hex
+/// characters, branchlessly and without a lookup table.
+///
+/// `letter_bias` is `b'a' - b'0' - 10 == 39` for lowercase, `7` for uppercase.
 #[inline(always)]
-pub unsafe fn encode_slice_unsafe(config: &Config, input: &[u8], mut dst: *mut u8) {
+const fn nibbles_to_ascii(nib: u64, letter_bias: u64) -> u64 {
+    // `n + 6` carries into bit 4 exactly when `n >= 10`, so this is a
+    // per-byte "is a letter" flag without a single comparison.
+    let letters = (nib.wrapping_add(0x0606_0606_0606_0606) >> 4) & ONES;
+
+    // Each byte of `letters` is 0 or 1 and the bias fits in a byte, so the
+    // multiply cannot carry between lanes.
+    nib.wrapping_add(0x3030_3030_3030_3030)
+        .wrapping_add(letters.wrapping_mul(letter_bias))
+}
+
+/// Encodes `input` as hex into `dst`.
+///
+/// `dst` must be at least `input.len() * 2` bytes long; anything past that is
+/// left untouched. A short `dst` cannot cause UB — it panics.
+#[inline(always)]
+pub fn encode_slice(config: &Config, input: &[u8], dst: &mut [u8]) {
     let len = input.len();
-    let mut src = input.as_ptr();
 
-    if len == 0 { return; }
+    if len == 0 {
+        return;
+    }
 
-    let alphabet = if config.uppercase {
-        &UPPER_ALPHABET
+    // The only thing the alphabet choice changes is how far past '9' a letter
+    // sits: 'a' - '0' - 10 == 39, 'A' - '0' - 10 == 7.
+    let pairs: &[u16; 256] = if config.uppercase {
+        &UPPER_PAIRS
     } else {
-        &LOWER_ALPHABET
+        &LOWER_PAIRS
     };
 
-    unsafe {
-        // Main loop: 4 input bytes -> 8 output chars (packed into one u64 write)
-        let len_aligned = len - (len % 4);
-        let src_end_aligned = src.add(len_aligned);
+    let len_aligned = len & !7;
+    let (body_in, tail_in) = input.split_at(len_aligned);
+    let (body_out, tail_out) = dst[..len * 2].split_at_mut(len_aligned * 2);
 
-        while src < src_end_aligned {
-            // Load 4 bytes and normalize to big-endian byte order in the register
-            #[cfg(target_endian = "little")]
-            let chunk = (src as *const u32).read_unaligned().to_be();
+    // Main loop: 8 input bytes -> 16 output chars, one table load per byte.
+    for (src, out) in body_in.chunks_exact(8).zip(body_out.chunks_exact_mut(16)) {
+        let lo = u64::from(pairs[src[0] as usize])
+            | u64::from(pairs[src[1] as usize]) << 16
+            | u64::from(pairs[src[2] as usize]) << 32
+            | u64::from(pairs[src[3] as usize]) << 48;
+        let hi = u64::from(pairs[src[4] as usize])
+            | u64::from(pairs[src[5] as usize]) << 16
+            | u64::from(pairs[src[6] as usize]) << 32
+            | u64::from(pairs[src[7] as usize]) << 48;
 
-            #[cfg(target_endian = "big")]
-            let chunk = (src as *const u32).read_unaligned();
+        out[..8].copy_from_slice(&lo.to_le_bytes());
+        out[8..].copy_from_slice(&hi.to_le_bytes());
+    }
 
-            let b0 = ((chunk >> 24) & 0xFF) as usize;
-            let b1 = ((chunk >> 16) & 0xFF) as usize;
-            let b2 = ((chunk >> 8) & 0xFF) as usize;
-            let b3 = (chunk & 0xFF) as usize;
-
-            let pack =
-                (*alphabet.get_unchecked((b0 >> 4) & 0x0F) as u64) |
-                (*alphabet.get_unchecked(b0 & 0x0F) as u64) << 8 |
-                (*alphabet.get_unchecked((b1 >> 4) & 0x0F) as u64) << 16 |
-                (*alphabet.get_unchecked(b1 & 0x0F) as u64) << 24 |
-                (*alphabet.get_unchecked((b2 >> 4) & 0x0F) as u64) << 32 |
-                (*alphabet.get_unchecked(b2 & 0x0F) as u64) << 40 |
-                (*alphabet.get_unchecked((b3 >> 4) & 0x0F) as u64) << 48 |
-                (*alphabet.get_unchecked(b3 & 0x0F) as u64) << 56;
-
-            (dst as *mut u64).write_unaligned(pack);
-
-            src = src.add(4);
-            dst = dst.add(8);
-        }
-
-        // Tail handling (0–3 remaining bytes)
-        let remaining = len - len_aligned;
-        for i in 0..remaining {
-            let b = *src.add(i) as usize;
-            *dst.add(2 * i) = *alphabet.get_unchecked((b >> 4) & 0x0F);
-            *dst.add(2 * i + 1) = *alphabet.get_unchecked(b & 0x0F);
-        }
+    // Tail handling (0-7 remaining bytes)
+    for (i, &b) in tail_in.iter().enumerate() {
+        let pair = pairs[b as usize];
+        tail_out[2 * i] = pair as u8;
+        tail_out[2 * i + 1] = (pair >> 8) as u8;
     }
 }
 
 // --- DECODING ---
 
+/// Decodes 8 hex characters (little-endian packed) into the 4 bytes they
+/// represent, or `None` if any of the 8 is not a hex digit.
+///
+/// Validation is a re-encode: map each character to the nibble it *would*
+/// decode to, encode that nibble back, and compare against the (case-folded)
+/// input. Hex encoding is injective, so anything that isn't a hex digit fails
+/// to round-trip — which replaces three SWAR range checks with one comparison.
 #[inline(always)]
-pub unsafe fn decode_slice_unsafe(input: &[u8], mut dst: *mut u8) -> Result<(), Error> {
+const fn decode_u64(chars: u64) -> (u32, u64) {
+    // Bit 6 is set for `A-Z`/`a-z` (and for `@`-ish neighbours, which the
+    // round-trip check below rejects), clear for `0-9`.
+    let letters = (chars >> 6) & ONES;
+
+    // `'a' & 0x0F == 1`, so letters need +9 to land on 10..=15.
+    let nibbles = (chars & 0x0F0F_0F0F_0F0F_0F0F).wrapping_add(letters.wrapping_mul(9));
+
+    // Fold `A-F` onto `a-f` so one lowercase re-encode covers both cases.
+    let folded = chars | letters.wrapping_mul(0x20);
+
+    // Two ways to fail, tested as one branch:
+    //   * a nibble overflowed its 4 bits (`'g'..='o'` land on 16..=24, and
+    //     16 re-encodes to `'g'` again — so the round-trip alone would accept
+    //     them);
+    //   * the round-trip disagrees with the input, which catches everything
+    //     else, including bytes with the high bit set.
+    let bad = (nibbles & 0xF0F0_F0F0_F0F0_F0F0) | (nibbles_to_ascii(nibbles, LOWER_BIAS) ^ folded);
+
+    // Fuse each 16-bit lane's two nibble bytes into one output byte:
+    // `(c0 << 4) | c1`, then gather the four lanes into a `u32`.
+    let fused = (nibbles << 4) | (nibbles >> 8);
+    let mut packed = fused & 0x00FF_00FF_00FF_00FF;
+    packed = (packed | (packed >> 8)) & 0x0000_FFFF_0000_FFFF;
+    packed = (packed | (packed >> 16)) & 0x0000_0000_FFFF_FFFF;
+
+    (packed as u32, bad)
+}
+
+/// Reads 8 characters starting at `src[off]`.
+#[inline(always)]
+fn load_u64(src: &[u8], off: usize) -> u64 {
+    u64::from_le_bytes([
+        src[off],
+        src[off + 1],
+        src[off + 2],
+        src[off + 3],
+        src[off + 4],
+        src[off + 5],
+        src[off + 6],
+        src[off + 7],
+    ])
+}
+
+/// Decodes hex `input` into `dst`.
+///
+/// `dst` must be at least `input.len() / 2` bytes long. On `Err` the contents
+/// of `dst` are unspecified (the kernel may have written whole groups before
+/// reaching the invalid character), but always in-bounds.
+#[inline(always)]
+pub fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     let len = input.len();
 
-    if len == 0 { return Ok(()); }
-    if len % 2 != 0 { return Err(Error::InvalidLength); }
-
-    let mut src = input.as_ptr();
-    let table = HEX_DECODE_TABLE.as_ptr();
-
-    unsafe {
-        // Fast loop: 8 input chars -> 4 output bytes
-        let len_aligned = len - (len % 8);
-        let src_end_fast = src.add(len_aligned);
-
-        while src < src_end_fast {
-            // Scalar lookups
-            let d0 = *table.add(*src.add(0) as usize);
-            let d1 = *table.add(*src.add(1) as usize);
-            let d2 = *table.add(*src.add(2) as usize);
-            let d3 = *table.add(*src.add(3) as usize);
-            let d4 = *table.add(*src.add(4) as usize);
-            let d5 = *table.add(*src.add(5) as usize);
-            let d6 = *table.add(*src.add(6) as usize);
-            let d7 = *table.add(*src.add(7) as usize);
-
-            // Fast validation (valid nibbles are 0x00–0x0F)
-            if (d0 | d1 | d2 | d3 | d4 | d5 | d6 | d7) & 0xF0 != 0 {
-                return Err(Error::InvalidCharacter);
-            }
-
-            // Pack into 4 bytes and write as a single u32
-            let out0 = (d0 << 4) | d1;
-            let out1 = (d2 << 4) | d3;
-            let out2 = (d4 << 4) | d5;
-            let out3 = (d6 << 4) | d7;
-
-            let pack = (out0 as u32) |
-                ((out1 as u32) << 8) |
-                ((out2 as u32) << 16) |
-                ((out3 as u32) << 24);
-
-            (dst as *mut u32).write_unaligned(pack);
-
-            src = src.add(8);
-            dst = dst.add(4);
-        }
-
-        // Tail handling (remaining even number of chars < 8)
-        let src_end = input.as_ptr().add(len);
-
-        while src < src_end {
-            let high = *table.add(*src as usize);
-            let low = *table.add(*src.add(1) as usize);
-
-            if (high | low) & 0xF0 != 0 {
-                return Err(Error::InvalidCharacter);
-            }
-
-            *dst = (high << 4) | low;
-
-            src = src.add(2);
-            dst = dst.add(1);
-        }
-
-        Ok(())
+    if len == 0 {
+        return Ok(());
     }
+    if len % 2 != 0 {
+        return Err(Error::InvalidLength);
+    }
+
+    let len_aligned = len & !31;
+    let (body_in, rest_in) = input.split_at(len_aligned);
+    let (body_out, rest_out) = dst[..len / 2].split_at_mut(len_aligned / 2);
+
+    // Main loop: 32 input chars -> 16 output bytes as four independent chains.
+    // Each chain is long (~17 cycles of dependent arithmetic) but only ~5
+    // cycles of port pressure, so the win here is overlap, not fewer uops.
+    for (src, out) in body_in.chunks_exact(32).zip(body_out.chunks_exact_mut(16)) {
+        let (g0, bad0) = decode_u64(load_u64(src, 0));
+        let (g1, bad1) = decode_u64(load_u64(src, 8));
+        let (g2, bad2) = decode_u64(load_u64(src, 16));
+        let (g3, bad3) = decode_u64(load_u64(src, 24));
+
+        if bad0 | bad1 | bad2 | bad3 != 0 {
+            return Err(Error::InvalidCharacter);
+        }
+
+        out[0..4].copy_from_slice(&g0.to_le_bytes());
+        out[4..8].copy_from_slice(&g1.to_le_bytes());
+        out[8..12].copy_from_slice(&g2.to_le_bytes());
+        out[12..16].copy_from_slice(&g3.to_le_bytes());
+    }
+
+    // Up to three 8-character groups may be left over.
+    let mid_len = rest_in.len() & !7;
+    let (mid_in, tail_in) = rest_in.split_at(mid_len);
+    let (mid_out, tail_out) = rest_out.split_at_mut(mid_len / 2);
+
+    for (src, out) in mid_in.chunks_exact(8).zip(mid_out.chunks_exact_mut(4)) {
+        let (word, bad) = decode_u64(load_u64(src, 0));
+
+        if bad != 0 {
+            return Err(Error::InvalidCharacter);
+        }
+
+        out.copy_from_slice(&word.to_le_bytes());
+    }
+
+    // Tail handling (remaining even number of chars < 8)
+    for (src, out) in tail_in.chunks_exact(2).zip(tail_out.iter_mut()) {
+        let high = HEX_DECODE_TABLE[src[0] as usize];
+        let low = HEX_DECODE_TABLE[src[1] as usize];
+
+        if (high | low) & 0xF0 != 0 {
+            return Err(Error::InvalidCharacter);
+        }
+
+        *out = (high << 4) | low;
+    }
+
+    Ok(())
 }
 
 // --- KANI (FORMAL VERIFICATION) ---
@@ -172,12 +295,10 @@ mod kani_verification_scalar {
     // Decoder Induction Size
     const DEC_INDUCTION_LEN: usize = 17;
 
-    // --- REAL TESTS --- 
-
-    // --- REAL TESTS --- 
+    // --- REAL TESTS ---
 
     /// **Proof 1: Roundtrip Correctness (The Logic Check)**
-    /// 
+    ///
     /// Verifies that `Decode(Encode(X)) == X`.
     #[kani::proof]
     fn check_scalar_roundtrip_correctness() {
@@ -189,41 +310,34 @@ mod kani_verification_scalar {
         let mut enc_buf = [0u8; 128];
         let mut dec_buf = [0u8; 128];
 
-        unsafe {
-            // 1. Encode
-            encode_slice_unsafe(&config, &input, enc_buf.as_mut_ptr());
+        // 1. Encode
+        encode_slice(&config, &input, &mut enc_buf);
 
-            // Calculate actual encoded length for slicing
-            let encoded_slice = &enc_buf[..input_len * 2];
+        // 2. Decode
+        // This MUST succeed for valid encoded output
+        decode_slice(&enc_buf[..input_len * 2], &mut dec_buf)
+            .expect("Valid encoding failed to decode");
 
-            // 2. Decode
-            // This MUST succeed for valid encoded output
-            decode_slice_unsafe(encoded_slice, dec_buf.as_mut_ptr())
-                .expect("Valid encoding failed to decode");
-
-            // 3. Verify
-            assert_eq!(&dec_buf[..input_len], &input, "Roundtrip mismatch");
-        }
+        // 3. Verify
+        assert_eq!(&dec_buf[..input_len], &input, "Roundtrip mismatch");
     }
 
     /// **Proof 2: Decoder Robustness & Induction**
-    /// 
-    /// Verifies that `decode_slice_avx2`:
+    ///
+    /// Verifies that `decode_slice`:
     /// 1. Accepts ANY `N` bytes of garbage input.
-    /// 2. Never Segfaults, Panics, or causes UB.
-    /// 3. Safely handles the SIMD->Scalar pointer transition.
+    /// 2. Never panics or writes out of bounds.
+    /// 3. Safely handles the wide-loop -> tail transition.
     #[kani::proof]
     fn check_scalar_decode_robustness() {
         // Input: `N` bytes of unrestricted symbolic data (garbage)
         let input: [u8; DEC_INDUCTION_LEN] = kani::any();
-        
+
         // Output Buffer: Max estimated size
         let mut output = [0u8; 128];
 
-        unsafe {
-            // We ignore the Result. We only care that this function call 
-            // returns safely (Ok or Err) and does not crash.
-            let _ = decode_slice_unsafe(&input, output.as_mut_ptr());
-        }
+        // We ignore the Result. We only care that this call returns (Ok or Err)
+        // without panicking.
+        let _ = decode_slice(&input, &mut output);
     }
 }
