@@ -48,6 +48,10 @@ const UPPER_ALPHABET: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Maps one input byte straight to the two characters it encodes, packed
 /// little-endian so the first character lands in the low byte.
+// Every index below is `i >> 4` or `i & 0x0F`, i.e. `0..16` into a 16-entry
+// array, or `i` itself bounded by the `while i < 256` loop into the 256-entry
+// `table` -- both provably in range, just not to clippy's static analysis.
+#[allow(clippy::indexing_slicing)]
 const fn pair_table(alphabet: [u8; 16]) -> [u16; 256] {
     let mut table = [0u16; 256];
     let mut i = 0;
@@ -70,6 +74,9 @@ const ONES: u64 = 0x0101_0101_0101_0101;
 /// uses tables rather than arithmetic.
 const LOWER_BIAS: u64 = 39;
 
+// `digit`/`lower`/`upper` are all ASCII bytes built from `b'0'`/`b'a'`/`b'A'`
+// plus a `0..16` offset, so every index below is in range by construction.
+#[allow(clippy::indexing_slicing)]
 const HEX_DECODE_TABLE: [u8; 256] = {
     let mut table = [0xFFu8; 256];
 
@@ -98,7 +105,7 @@ const HEX_DECODE_TABLE: [u8; 256] = {
 /// characters, branchlessly and without a lookup table.
 ///
 /// `letter_bias` is `b'a' - b'0' - 10 == 39` for lowercase, `7` for uppercase.
-#[inline(always)]
+#[inline]
 const fn nibbles_to_ascii(nib: u64, letter_bias: u64) -> u64 {
     // `n + 6` carries into bit 4 exactly when `n >= 10`, so this is a
     // per-byte "is a letter" flag without a single comparison.
@@ -114,8 +121,14 @@ const fn nibbles_to_ascii(nib: u64, letter_bias: u64) -> u64 {
 ///
 /// `dst` must be at least `input.len() * 2` bytes long; anything past that is
 /// left untouched. A short `dst` cannot cause UB — it panics.
-#[inline(always)]
-pub fn encode_slice(config: &Config, input: &[u8], dst: &mut [u8]) {
+// Every index/slice below is either `[0..7]` into a `chunks_exact(8)`/
+// `chunks_exact_mut(16)` window (exactly that length by definition) or a
+// `usize::from(u8)` index into a 256-entry table (always in range) or a
+// prefix `dst[..len * 2]` that Kani proves in bounds for every `input`/`dst`
+// pair this is called with (see `kani_verification_scalar` below).
+#[allow(clippy::indexing_slicing)]
+#[inline]
+pub(crate) fn encode_slice(config: Config, input: &[u8], dst: &mut [u8]) {
     let len = input.len();
 
     if len == 0 {
@@ -136,14 +149,14 @@ pub fn encode_slice(config: &Config, input: &[u8], dst: &mut [u8]) {
 
     // Main loop: 8 input bytes -> 16 output chars, one table load per byte.
     for (src, out) in body_in.chunks_exact(8).zip(body_out.chunks_exact_mut(16)) {
-        let lo = u64::from(pairs[src[0] as usize])
-            | u64::from(pairs[src[1] as usize]) << 16
-            | u64::from(pairs[src[2] as usize]) << 32
-            | u64::from(pairs[src[3] as usize]) << 48;
-        let hi = u64::from(pairs[src[4] as usize])
-            | u64::from(pairs[src[5] as usize]) << 16
-            | u64::from(pairs[src[6] as usize]) << 32
-            | u64::from(pairs[src[7] as usize]) << 48;
+        let lo = u64::from(pairs[usize::from(src[0])])
+            | u64::from(pairs[usize::from(src[1])]) << 16
+            | u64::from(pairs[usize::from(src[2])]) << 32
+            | u64::from(pairs[usize::from(src[3])]) << 48;
+        let hi = u64::from(pairs[usize::from(src[4])])
+            | u64::from(pairs[usize::from(src[5])]) << 16
+            | u64::from(pairs[usize::from(src[6])]) << 32
+            | u64::from(pairs[usize::from(src[7])]) << 48;
 
         out[..8].copy_from_slice(&lo.to_le_bytes());
         out[8..].copy_from_slice(&hi.to_le_bytes());
@@ -151,9 +164,10 @@ pub fn encode_slice(config: &Config, input: &[u8], dst: &mut [u8]) {
 
     // Tail handling (0-7 remaining bytes)
     for (i, &b) in tail_in.iter().enumerate() {
-        let pair = pairs[b as usize];
-        tail_out[2 * i] = pair as u8;
-        tail_out[2 * i + 1] = (pair >> 8) as u8;
+        let pair = pairs[usize::from(b)];
+        let [lo, hi] = pair.to_le_bytes();
+        tail_out[2 * i] = lo;
+        tail_out[2 * i + 1] = hi;
     }
 }
 
@@ -166,7 +180,7 @@ pub fn encode_slice(config: &Config, input: &[u8], dst: &mut [u8]) {
 /// decode to, encode that nibble back, and compare against the (case-folded)
 /// input. Hex encoding is injective, so anything that isn't a hex digit fails
 /// to round-trip — which replaces three SWAR range checks with one comparison.
-#[inline(always)]
+#[inline]
 const fn decode_u64(chars: u64) -> (u32, u64) {
     // Bit 6 is set for `A-Z`/`a-z` (and for `@`-ish neighbours, which the
     // round-trip check below rejects), clear for `0-9`.
@@ -193,11 +207,19 @@ const fn decode_u64(chars: u64) -> (u32, u64) {
     packed = (packed | (packed >> 8)) & 0x0000_FFFF_0000_FFFF;
     packed = (packed | (packed >> 16)) & 0x0000_0000_FFFF_FFFF;
 
-    (packed as u32, bad)
+    // `packed` is masked to the low 32 bits above, so this truncation is lossless.
+    let [b0, b1, b2, b3, ..] = packed.to_le_bytes();
+
+    (u32::from_le_bytes([b0, b1, b2, b3]), bad)
 }
 
 /// Reads 8 characters starting at `src[off]`.
-#[inline(always)]
+///
+/// # Panics
+/// Panics if `src` has fewer than `off + 8` bytes; every caller passes an
+/// 8-byte-aligned window from a `chunks_exact(8)`/`chunks_exact(32)` split.
+#[allow(clippy::indexing_slicing)]
+#[inline]
 fn load_u64(src: &[u8], off: usize) -> u64 {
     u64::from_le_bytes([
         src[off],
@@ -216,14 +238,18 @@ fn load_u64(src: &[u8], off: usize) -> u64 {
 /// `dst` must be at least `input.len() / 2` bytes long. On `Err` the contents
 /// of `dst` are unspecified (the kernel may have written whole groups before
 /// reaching the invalid character), but always in-bounds.
-#[inline(always)]
-pub fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
+// As in `encode_slice`: every index/slice is a `chunks_exact` window sized to
+// exactly what it's indexed with, a `usize::from(u8)` index into a 256-entry
+// table, or a prefix Kani proves in bounds (`kani_verification_scalar` below).
+#[allow(clippy::indexing_slicing)]
+#[inline]
+pub(crate) fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     let len = input.len();
 
     if len == 0 {
         return Ok(());
     }
-    if len % 2 != 0 {
+    if !len.is_multiple_of(2) {
         return Err(Error::InvalidLength);
     }
 
@@ -267,8 +293,8 @@ pub fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
 
     // Tail handling (remaining even number of chars < 8)
     for (src, out) in tail_in.chunks_exact(2).zip(tail_out.iter_mut()) {
-        let high = HEX_DECODE_TABLE[src[0] as usize];
-        let low = HEX_DECODE_TABLE[src[1] as usize];
+        let high = HEX_DECODE_TABLE[usize::from(src[0])];
+        let low = HEX_DECODE_TABLE[usize::from(src[1])];
 
         if (high | low) & 0xF0 != 0 {
             return Err(Error::InvalidCharacter);
@@ -302,7 +328,9 @@ mod kani_verification_scalar {
     /// Verifies that `Decode(Encode(X)) == X`.
     #[kani::proof]
     fn check_scalar_roundtrip_correctness() {
-        let config = Config { uppercase: kani::any() };
+        let config = Config {
+            uppercase: kani::any(),
+        };
         let input: [u8; ENC_INDUCTION_LEN] = kani::any();
         let input_len = input.len();
 
@@ -311,7 +339,7 @@ mod kani_verification_scalar {
         let mut dec_buf = [0u8; 128];
 
         // 1. Encode
-        encode_slice(&config, &input, &mut enc_buf);
+        encode_slice(config, &input, &mut enc_buf);
 
         // 2. Decode
         // This MUST succeed for valid encoded output

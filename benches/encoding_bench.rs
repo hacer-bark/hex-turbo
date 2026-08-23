@@ -4,6 +4,8 @@
 //! outside the timed loop, so what is measured is the codec and nothing else.
 //! Every engine also produces lowercase, so all four are doing identical work.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
 use criterion::{
     AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput, criterion_group,
     criterion_main,
@@ -16,13 +18,15 @@ use std::time::Duration;
 // 1. The hex-turbo
 use hex_turbo::LOWER_CASE as TURBO;
 
-// 2. Competitor 1: The standard 'hex' crate
-use hex::{decode_to_slice as decode_std, encode as encode_std, encode_to_slice as encode_std_into};
+// 2. The standard 'hex' crate
+use hex::{
+    decode_to_slice as decode_std, encode as encode_std, encode_to_slice as encode_std_into,
+};
 
-// 3. Competitor 2: The 'faster-hex' crate
+// 3. The 'faster-hex' crate
 use faster_hex::{hex_decode as decode_fast, hex_encode as encode_fast};
 
-// 4. Competitor 3: The 'hex-simd' crate
+// 4. The 'hex-simd' crate
 use hex_simd::{AsOut, AsciiCase, decode as decode_simd, encode as encode_simd};
 
 fn generate_random_data(size: usize) -> Vec<u8> {
@@ -42,6 +46,11 @@ fn should_run(target_name: &str) -> bool {
     targets.contains(&target_name.to_lowercase())
 }
 
+// Four competitors x two directions, each needing its own `bench_with_input`
+// call (Criterion's API, not a repeated computation) -- splitting this up
+// would mean threading `group` and both buffers through several helpers for
+// no reduction in what's actually being done.
+#[allow(clippy::too_many_lines)]
 fn bench_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Hex_Performances");
 
@@ -53,18 +62,16 @@ fn bench_comparison(c: &mut Criterion) {
     group.sample_size(50);
 
     let sizes = [
-        32,
-        64,
-        256,
-        512,
-        1024,
-        4 * 1024,
-        16 * 1024,
-        64 * 1024,
-        128 * 1024,
+        32,               // 32 B
+        512,              // 512 B
+        4 * 1024,         // 4 KB
+        64 * 1024,        // 64 KB
+        512 * 1024,       // 512 KB
+        1024 * 1024,      // 1 MB
+        10 * 1024 * 1024, // 10 MB
     ];
 
-    for size in sizes.iter() {
+    for size in &sizes {
         let input_data = generate_random_data(*size);
         let encoded_str = encode_std(&input_data);
 
@@ -77,13 +84,17 @@ fn bench_comparison(c: &mut Criterion) {
 
         // 1. Hex Turbo
         if should_run("turbo") {
-            group.bench_with_input(BenchmarkId::new("Encode/Turbo", size), &input_data, |b, d| {
-                b.iter(|| {
-                    TURBO
-                        .encode_into(black_box(d), black_box(&mut encode_buffer))
-                        .unwrap()
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/Turbo", size),
+                &input_data,
+                |b, d| {
+                    b.iter(|| {
+                        TURBO
+                            .encode_into(black_box(d), black_box(&mut encode_buffer))
+                            .unwrap()
+                    });
+                },
+            );
         }
 
         // 2. Hex Standard (hex crate)
@@ -91,30 +102,38 @@ fn bench_comparison(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("Encode/Std", size), &input_data, |b, d| {
                 b.iter(|| {
                     encode_std_into(black_box(d), black_box(&mut encode_buffer)).unwrap();
-                })
+                });
             });
         }
 
         // 3. Faster-hex
         if should_run("fast") {
-            group.bench_with_input(BenchmarkId::new("Encode/Fast", size), &input_data, |b, d| {
-                b.iter(|| {
-                    encode_fast(black_box(d), black_box(&mut encode_buffer)).unwrap();
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/Fast", size),
+                &input_data,
+                |b, d| {
+                    b.iter(|| {
+                        encode_fast(black_box(d), black_box(&mut encode_buffer)).unwrap();
+                    });
+                },
+            );
         }
 
         // 4. Hex-SIMD
         if should_run("simd") {
-            group.bench_with_input(BenchmarkId::new("Encode/Simd", size), &input_data, |b, d| {
-                b.iter(|| {
-                    black_box(encode_simd(
-                        black_box(d),
-                        black_box(&mut encode_buffer).as_out(),
-                        AsciiCase::Lower,
-                    ));
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Encode/Simd", size),
+                &input_data,
+                |b, d| {
+                    b.iter(|| {
+                        black_box(encode_simd(
+                            black_box(d),
+                            black_box(&mut encode_buffer).as_out(),
+                            AsciiCase::Lower,
+                        ));
+                    });
+                },
+            );
         }
 
         // ======================================================================
@@ -134,42 +153,55 @@ fn bench_comparison(c: &mut Criterion) {
                         TURBO
                             .decode_into(black_box(s.as_bytes()), black_box(&mut decode_buffer))
                             .unwrap()
-                    })
+                    });
                 },
             );
         }
 
         // 2. Hex Standard (hex crate)
         if should_run("std") || should_run("hex") {
-            group.bench_with_input(BenchmarkId::new("Decode/Std", size), &encoded_str, |b, s| {
-                b.iter(|| {
-                    decode_std(black_box(s), black_box(&mut decode_buffer)).unwrap();
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/Std", size),
+                &encoded_str,
+                |b, s| {
+                    b.iter(|| {
+                        decode_std(black_box(s), black_box(&mut decode_buffer)).unwrap();
+                    });
+                },
+            );
         }
 
         // 3. Faster-hex
         if should_run("fast") {
-            group.bench_with_input(BenchmarkId::new("Decode/Fast", size), &encoded_str, |b, s| {
-                b.iter(|| {
-                    decode_fast(black_box(s.as_bytes()), black_box(&mut decode_buffer)).unwrap();
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/Fast", size),
+                &encoded_str,
+                |b, s| {
+                    b.iter(|| {
+                        decode_fast(black_box(s.as_bytes()), black_box(&mut decode_buffer))
+                            .unwrap();
+                    });
+                },
+            );
         }
 
         // 4. Hex-SIMD
         if should_run("simd") {
-            group.bench_with_input(BenchmarkId::new("Decode/Simd", size), &encoded_str, |b, s| {
-                b.iter(|| {
-                    black_box(
-                        decode_simd(
-                            black_box(s.as_bytes()),
-                            black_box(&mut decode_buffer).as_out(),
-                        )
-                        .unwrap(),
-                    );
-                })
-            });
+            group.bench_with_input(
+                BenchmarkId::new("Decode/Simd", size),
+                &encoded_str,
+                |b, s| {
+                    b.iter(|| {
+                        black_box(
+                            decode_simd(
+                                black_box(s.as_bytes()),
+                                black_box(&mut decode_buffer).as_out(),
+                            )
+                            .unwrap(),
+                        );
+                    });
+                },
+            );
         }
     }
     group.finish();

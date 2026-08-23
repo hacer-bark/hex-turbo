@@ -3,7 +3,7 @@
   <p><strong>A Rust hex codec with runtime AVX-512/AVX2 dispatch, whose <code>unsafe</code> kernels are checked by a model checker, not just by review.</strong></p>
 
   [![Crates.io](https://img.shields.io/crates/v/hex-turbo.svg?style=for-the-badge&color=fc8d62)](https://crates.io/crates/hex-turbo)
-  [![License](https://img.shields.io/crates/l/hex-turbo.svg?style=for-the-badge&color=8da0cb)](https://crates.io/crates/hex-turbo)
+  [![License](https://img.shields.io/badge/license-0BSD-8da0cb.svg?style=for-the-badge)](#license)
   [![Kani Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/verification.yml?label=Kani%20Verified&style=for-the-badge&color=e78ac3)](https://github.com/hacer-bark/hex-turbo/actions/workflows/verification.yml)
   [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/miri.yml?label=MIRI%20Verified&style=for-the-badge&color=66c2a5)](https://github.com/hacer-bark/hex-turbo/actions/workflows/miri.yml)
 </div>
@@ -286,13 +286,7 @@ No. It was removed to keep the dependency tree empty; wrap the `_into` APIs in y
 
 ## License
 
-Licensed under either of
-
-- [Apache License, Version 2.0](https://github.com/hacer-bark/hex-turbo/blob/main/LICENSE-APACHE)
-- [MIT license](https://github.com/hacer-bark/hex-turbo/blob/main/LICENSE-MIT)
-
-at your option.
+Licensed under the [0BSD license](https://github.com/hacer-bark/hex-turbo/blob/main/LICENSE).
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
-this crate, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
-additional terms or conditions.
+this crate shall be licensed as above, without any additional terms or conditions.

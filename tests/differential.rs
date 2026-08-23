@@ -10,10 +10,11 @@
 //! ```
 
 #![cfg(feature = "std")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use hex_turbo::{Error, LOWER_CASE, UPPER_CASE};
 
-fn xorshift(state: &mut u64) -> u64 {
+const fn xorshift(state: &mut u64) -> u64 {
     let mut x = *state;
     x ^= x << 13;
     x ^= x >> 7;
@@ -24,7 +25,9 @@ fn xorshift(state: &mut u64) -> u64 {
 
 fn random_bytes(n: usize, seed: u64) -> Vec<u8> {
     let mut s = seed | 1;
-    (0..n).map(|_| (xorshift(&mut s) >> 24) as u8).collect()
+    (0..n)
+        .map(|_| (xorshift(&mut s) >> 24).to_le_bytes()[0])
+        .collect()
 }
 
 /// Lengths that straddle every stride in the crate: scalar (4/8), AVX2 (32/128),
@@ -45,7 +48,11 @@ fn encode_matches_reference() {
         let lower = LOWER_CASE.encode(&input);
         let upper = UPPER_CASE.encode(&input);
 
-        assert_eq!(lower, hex::encode(&input), "lowercase mismatch at len {len}");
+        assert_eq!(
+            lower,
+            hex::encode(&input),
+            "lowercase mismatch at len {len}"
+        );
         assert_eq!(
             upper,
             hex::encode_upper(&input),
@@ -69,7 +76,11 @@ fn decode_roundtrips_and_accepts_mixed_case() {
 
         assert_eq!(LOWER_CASE.decode(&lower).unwrap(), input, "lower at {len}");
         assert_eq!(LOWER_CASE.decode(&upper).unwrap(), input, "upper at {len}");
-        assert_eq!(UPPER_CASE.decode(&lower).unwrap(), input, "engine-swap at {len}");
+        assert_eq!(
+            UPPER_CASE.decode(&lower).unwrap(),
+            input,
+            "engine-swap at {len}"
+        );
 
         // Alternating case within the same input.
         let mixed: Vec<u8> = lower
@@ -113,7 +124,11 @@ fn rejects_invalid_characters_at_every_position() {
 fn rejects_odd_lengths_and_short_buffers() {
     for len in [1usize, 3, 31, 33, 63, 65, 129] {
         let odd = "a".repeat(len);
-        assert_eq!(LOWER_CASE.decode(&odd), Err(Error::InvalidLength), "len {len}");
+        assert_eq!(
+            LOWER_CASE.decode(&odd),
+            Err(Error::InvalidLength),
+            "len {len}"
+        );
 
         let mut buf = vec![0u8; len / 2];
         assert_eq!(
@@ -144,13 +159,19 @@ fn oversized_output_buffer_is_untouched_past_the_written_prefix() {
     let mut buf = vec![0xAAu8; 400];
     let n = LOWER_CASE.encode_into(&input, &mut buf).unwrap();
     assert_eq!(n, 200);
-    assert!(buf[200..].iter().all(|&b| b == 0xAA), "wrote past encoded_len");
+    assert!(
+        buf[200..].iter().all(|&b| b == 0xAA),
+        "wrote past encoded_len"
+    );
 
     let encoded = LOWER_CASE.encode(&input);
     let mut buf = vec![0xAAu8; 400];
     let n = LOWER_CASE.decode_into(&encoded, &mut buf).unwrap();
     assert_eq!(n, 100);
-    assert!(buf[100..].iter().all(|&b| b == 0xAA), "wrote past decoded_len");
+    assert!(
+        buf[100..].iter().all(|&b| b == 0xAA),
+        "wrote past decoded_len"
+    );
 }
 
 #[test]
@@ -162,9 +183,9 @@ fn validity_matches_reference_for_every_byte_value() {
         let filler = "a".repeat(len - 2);
 
         for pos in [0usize, 1, len / 2, len - 2, len - 1] {
-            for byte in 0u16..=255 {
+            for byte in 0u8..=255 {
                 let mut s = format!("{filler}aa").into_bytes();
-                s[pos] = byte as u8;
+                s[pos] = byte;
 
                 let ours = LOWER_CASE.decode(&s);
                 let theirs = hex::decode(&s);
@@ -177,6 +198,63 @@ fn validity_matches_reference_for_every_byte_value() {
                 if let (Ok(a), Ok(b)) = (&ours, &theirs) {
                     assert_eq!(a, b, "len {len}, pos {pos}, byte {byte:#04x}");
                 }
+            }
+        }
+    }
+}
+
+/// The AVX2 kernels take different paths past 32 KiB (software prefetching)
+/// and past 2 MiB (non-temporal stores). The streaming path also has an
+/// alignment precondition -- `vmovntdq` faults on an unaligned address -- so
+/// every destination misalignment has to round-trip, including the odd ones
+/// the kernel is expected to decline to stream for.
+#[test]
+fn large_inputs_match_reference_at_every_destination_alignment() {
+    for &len in &[32 * 1024 + 1, 2 * 1024 * 1024 + 1, 2 * 1024 * 1024 + 129] {
+        let input = random_bytes(len, 0xA5A5_0F0F_1234_5678 ^ len as u64);
+        let expected = hex::encode(&input);
+
+        for off in [0usize, 1, 2, 8, 15, 16, 17, 30, 31] {
+            let mut enc = vec![0u8; len * 2 + off];
+            let n = LOWER_CASE.encode_into(&input, &mut enc[off..]).unwrap();
+            assert_eq!(n, len * 2);
+            assert_eq!(
+                &enc[off..],
+                expected.as_bytes(),
+                "encode mismatch at len {len}, dst offset {off}"
+            );
+
+            let mut dec = vec![0u8; len + off];
+            let n = LOWER_CASE
+                .decode_into(expected.as_bytes(), &mut dec[off..])
+                .unwrap();
+            assert_eq!(n, len);
+            assert_eq!(
+                &dec[off..],
+                &input[..],
+                "decode mismatch at len {len}, dst offset {off}"
+            );
+        }
+    }
+}
+
+/// A bad character anywhere in a large input must still be rejected -- the
+/// prefetching and streaming loops accumulate validity the same way the plain
+/// one does, but they are separate loops and are not otherwise exercised.
+#[test]
+fn large_inputs_reject_invalid_characters() {
+    for &len in &[32 * 1024 + 1, 2 * 1024 * 1024 + 1] {
+        let input = random_bytes(len, 0x1357_9BDF ^ len as u64);
+        let good = hex::encode(&input);
+
+        for pos in [0usize, 1, 1000, len, len * 2 - 1] {
+            for bad in [b'g', b'/', b':', b'@', b'G', 0x00, 0xFF, b' '] {
+                let mut s = good.clone().into_bytes();
+                s[pos] = bad;
+                assert!(
+                    LOWER_CASE.decode(&s).is_err(),
+                    "accepted {bad:#04x} at position {pos} of a {len}-byte input"
+                );
             }
         }
     }

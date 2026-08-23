@@ -3,13 +3,13 @@ name = "hex-turbo"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
+readme = "README.md"
+authors = ["Hacer-Bark <hacer.bark@proton.me>"]
+license = "0BSD"
 description = "The fastest memory-safe Hex engine. Formally verified (Kani/MIRI). Features runtime AVX2/AVX512 detection, zero-allocation API, and robust no_std support."
-license = "MIT OR Apache-2.0"
 repository = "https://github.com/hacer-bark/hex-turbo"
 documentation = "https://docs.rs/hex-turbo"
-readme = "README.md"
 build = "build.rs"
-authors = ["Hacer"]
 keywords = ["hex", "simd", "avx512", "performance", "encoding"]
 categories = ["encoding", "hardware-support", "no-std", "web-programming"]
 exclude = [
@@ -34,9 +34,33 @@ hex = "0.4"
 faster-hex = "0.10"
 hex-simd = "0.8"
 
+[lints.rust]
+warnings = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
+nursery = "deny"
+cargo = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+exit = "deny"
+dbg_macro = "deny"
+indexing_slicing = "deny"
+
+[lints.rustdoc]
+all = "deny"
+broken_intra_doc_links = "deny"
+
 [[bench]]
 name = "encoding_bench"
 harness = false
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

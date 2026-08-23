@@ -1,3 +1,7 @@
+//! API surface coverage tests.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
 #[cfg(feature = "std")]
 mod coverage_tests {
     use hex_turbo::{Error, LOWER_CASE, decode, encode, encode_upper};
@@ -20,13 +24,13 @@ mod coverage_tests {
         let mut input = *b"0123456g";
         let mut out = [0u8; 4];
         assert_eq!(
-            LOWER_CASE.decode_into(&input, &mut out),
+            LOWER_CASE.decode_into(input, &mut out),
             Err(Error::InvalidCharacter)
         );
 
         input = *b"g1234567";
         assert_eq!(
-            LOWER_CASE.decode_into(&input, &mut out),
+            LOWER_CASE.decode_into(input, &mut out),
             Err(Error::InvalidCharacter)
         );
     }
