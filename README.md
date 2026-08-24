@@ -193,8 +193,8 @@ python3 benches/scripts/plot_bench.py benches/results/raw.txt
 ```
 
 Select comparison targets with `BENCH_TARGET` (comma-separated): `turbo` (default,
-allocating API), `turbo-buff` (zero-allocation API), `simd` (`hex-simd`), `fast`
-(`faster-hex`), `std` (the `hex` crate), `all`.
+zero-allocation `_into` API), `simd` (`hex-simd`), `fast` (`faster-hex`), `std` (the `hex`
+crate), `all`.
 
 <details>
 <summary>Raw <code>cargo bench</code> output — AWS <code>c8a.large</code></summary>

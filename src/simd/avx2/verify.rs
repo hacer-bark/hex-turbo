@@ -17,9 +17,9 @@ mod avx2_miri_tests {
     // Reference crate
     use hex::encode as ref_encode_lower;
 
-    // --- Fast Deterministic Generator ---
-    // Generating random numbers in Miri is extremely slow.
-    // Sequential bytes cover 100% of the bitwise logic just as effectively.
+    // --- Deterministic Generator ---
+    // Random generation is slow under Miri; sequential bytes exercise the
+    // same bitwise logic just as effectively.
     fn get_data(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i % 256) as u8).collect()
     }
@@ -44,8 +44,7 @@ mod avx2_miri_tests {
         assert_eq!(
             &enc_buf[..],
             expected.as_bytes(),
-            "AVX2 Encoding mismatch (len={})",
-            len
+            "AVX2 encoding mismatch (len={len})"
         );
 
         // --- Decoding (own output) ---
@@ -55,18 +54,24 @@ mod avx2_miri_tests {
                 .expect("AVX2 decoder failed on valid own output")
         };
 
-        assert_eq!(&dec_buf[..], input, "AVX2 round-trip failed (len={})", len);
+        assert_eq!(&dec_buf[..], input, "AVX2 round-trip failed (len={len})");
     }
 
     fn run_avx2_tests(uppercase: bool) {
         let config = Config { uppercase };
 
-        // MIRI is slow. We don't need random lengths.
-        // We only need to test boundary conditions to achieve 100% path coverage.
-        // 0..16: Scalar tails
-        // 32: AVX2 boundaries (AVX2 processes 32 bytes / 64 hex chars per chunk)
-        // 64: Multiple AVX2 chunks
-        let boundaries = [0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128];
+        // Miri is slow, so this is boundary coverage rather than random
+        // lengths: the scalar tail (0..16), the 32-byte AVX2 step, the
+        // 128-byte encode block, one byte either side of each, and the
+        // (Miri-only, much smaller) `PREFETCH_MIN`/`NONTEMPORAL_MIN`
+        // crossings at 200/300 -- see the `#[cfg(miri)]` constants in
+        // `mod.rs`. Those two branches use real hardware instructions
+        // (`asm!`-based prefetch and non-temporal stores) that Miri cannot
+        // execute at all at the production thresholds (32 KiB / 2 MiB), so
+        // without the shrunk constants they would never run under Miri.
+        let boundaries = [
+            0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 199, 200, 201, 299, 300, 301, 512,
+        ];
 
         for &len in &boundaries {
             let input = get_data(len);
@@ -112,6 +117,29 @@ mod avx2_miri_tests {
         };
 
         assert_eq!(&dec_buf[..], input);
+    }
+
+    #[test]
+    fn miri_avx2_encode_streaming_store_every_dst_alignment() {
+        // Exercises the non-temporal-store path's `dst`-alignment handling:
+        // the head-fixup that walks to a 32-byte boundary before the first
+        // streamed store, and the odd-`dst.addr()` case that skips streaming
+        // entirely (`vmovntdq` requires an aligned address, and an odd
+        // address can never become 32-byte aligned by advancing an even
+        // distance). `NONTEMPORAL_MIN` is 300 bytes under Miri, so 320 bytes
+        // of input crosses it regardless of how much of the front the
+        // head-fixup eats. Sweeping every offset from 0 to 33 covers every
+        // parity and every residue mod 32 at least once.
+        let input = get_data(320);
+        let expected = ref_encode_lower(&input);
+
+        for off in 0..34usize {
+            let mut buf = vec![0u8; input.len() * 2 + off];
+            unsafe {
+                encode_slice_avx2(Config { uppercase: false }, &input, &mut buf[off..]);
+            }
+            assert_eq!(&buf[off..], expected.as_bytes(), "dst offset {off}");
+        }
     }
 
     #[test]

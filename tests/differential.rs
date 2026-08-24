@@ -8,8 +8,13 @@
 //! cargo test --test differential                                  # SIMD (if the host has it)
 //! cargo test --test differential --no-default-features --features std
 //! ```
+//!
+//! Skipped entirely under Miri: these cases run into the megabytes, which is
+//! fine at native speed but not through an interpreter. The Miri-specific
+//! kernel suites (`simd::avx2::verify`, `simd::avx512_vbmi::verify`) already
+//! give boundary coverage there.
 
-#![cfg(feature = "std")]
+#![cfg(all(feature = "std", not(miri)))]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use hex_turbo::{Error, LOWER_CASE, UPPER_CASE};

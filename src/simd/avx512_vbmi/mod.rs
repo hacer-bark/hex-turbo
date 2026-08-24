@@ -2,18 +2,26 @@ use crate::{Config, Error, scalar};
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m256i, __m512i, _MM_HINT_T0, _mm_prefetch, _mm_sfence, _mm256_loadu_si256,
-    _mm256_storeu_si256, _mm256_stream_si256, _mm512_cvtepi16_epi8, _mm512_cvtepu8_epi16,
-    _mm512_loadu_si512, _mm512_maddubs_epi16, _mm512_movepi8_mask, _mm512_or_si512,
-    _mm512_permutex2var_epi8, _mm512_permutexvar_epi8, _mm512_storeu_si512,
+    __m256i, __m512i, _MM_HINT_T0, _mm_prefetch, _mm256_loadu_si256, _mm256_storeu_si256,
+    _mm512_cvtepi16_epi8, _mm512_cvtepu8_epi16, _mm512_loadu_si512, _mm512_maddubs_epi16,
+    _mm512_movepi8_mask, _mm512_or_si512, _mm512_permutex2var_epi8, _mm512_permutexvar_epi8,
+    _mm512_storeu_si512,
 };
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256i, __m512i, _MM_HINT_T0, _mm_prefetch, _mm_sfence, _mm256_loadu_si256,
-    _mm256_storeu_si256, _mm256_stream_si256, _mm512_cvtepi16_epi8, _mm512_cvtepu8_epi16,
-    _mm512_loadu_si512, _mm512_maddubs_epi16, _mm512_movepi8_mask, _mm512_or_si512,
-    _mm512_permutex2var_epi8, _mm512_permutexvar_epi8, _mm512_storeu_si512,
+    __m256i, __m512i, _MM_HINT_T0, _mm_prefetch, _mm256_loadu_si256, _mm256_storeu_si256,
+    _mm512_cvtepi16_epi8, _mm512_cvtepu8_epi16, _mm512_loadu_si512, _mm512_maddubs_epi16,
+    _mm512_movepi8_mask, _mm512_or_si512, _mm512_permutex2var_epi8, _mm512_permutexvar_epi8,
+    _mm512_storeu_si512,
 };
+
+// `_mm256_stream_si256`/`_mm_sfence` lower to inline `asm!`, which Miri never
+// executes -- imported only for the real-hardware path; the Miri build routes
+// around them entirely (see `stream_store`/`sfence` below).
+#[cfg(all(not(miri), target_arch = "x86"))]
+use std::arch::x86::{_mm_sfence, _mm256_stream_si256};
+#[cfg(all(not(miri), target_arch = "x86_64"))]
+use std::arch::x86_64::{_mm_sfence, _mm256_stream_si256};
 
 // `vpmultishiftqb` is the one VBMI instruction Miri's x86 intrinsic
 // interpreter doesn't implement yet; `zmm_multishift_epi64_epi8` below routes
@@ -91,10 +99,16 @@ const WEIGHTS: [u8; 64] = [
 /// crossover here is high: the encoder's own store stream is dense enough that
 /// the hardware prefetcher keeps up on its own until the working set leaves
 /// L2. The decoder measured no benefit from prefetching at any size.
+#[cfg(not(miri))]
 const PREFETCH_MIN: usize = 512 * 1024;
+#[cfg(miri)]
+const PREFETCH_MIN: usize = 200;
 
 /// How far ahead of the load stream to prefetch, in bytes.
+#[cfg(not(miri))]
 const PREFETCH_DIST: usize = 512;
+#[cfg(miri)]
+const PREFETCH_DIST: usize = 8;
 
 /// Input length at which the decoder switches to non-temporal stores.
 ///
@@ -108,7 +122,10 @@ const PREFETCH_DIST: usize = 512;
 /// tried. Writing two bytes per byte read saturates the write-combining
 /// buffers, and once they are thrashing every partial line goes out
 /// separately, which costs far more than the read-for-ownership it saves.
+#[cfg(not(miri))]
 const NONTEMPORAL_MIN: usize = 1024 * 1024;
+#[cfg(miri)]
+const NONTEMPORAL_MIN: usize = 300;
 
 // Out of line for the same reason as in the AVX2 kernel: inlined, the scalar
 // tail's register demand forces every call -- including the ones that never
@@ -151,6 +168,34 @@ unsafe fn zmm_multishift_epi64_epi8(a: __m512i, b: __m512i) -> __m512i {
     #[cfg(not(miri))]
     {
         _mm512_multishift_epi64_epi8(a, b)
+    }
+}
+
+/// `_mm256_stream_si256`, routed through an ordinary store under Miri, whose
+/// interpreter refuses to run the underlying `vmovntdq` (it lowers to inline
+/// `asm!`, which Miri never executes) -- same reasoning as
+/// `zmm_multishift_epi64_epi8` above. Exact, not an approximation: streaming is
+/// a caching hint, not a value or ordering difference for a single-threaded
+/// reader. `_mm_sfence` orders non-temporal stores against later loads; with
+/// none of those under Miri, it becomes a no-op there too.
+#[inline]
+#[target_feature(enable = "avx512f,avx512bw,avx512vbmi")]
+unsafe fn stream_store(dst: *mut __m256i, val: __m256i) {
+    #[cfg(miri)]
+    unsafe {
+        _mm256_storeu_si256(dst, val);
+    }
+    #[cfg(not(miri))]
+    unsafe {
+        _mm256_stream_si256(dst, val);
+    }
+}
+
+#[inline]
+fn sfence() {
+    #[cfg(not(miri))]
+    unsafe {
+        _mm_sfence();
     }
 }
 
@@ -322,16 +367,30 @@ pub(crate) unsafe fn decode_slice_avx512_vbmi(
                 // Through the cold tail rather than `scalar::decode_slice`
                 // directly, so the scalar kernel's register demand stays off
                 // the hot path.
-                decode_tail(&src[..head], dst_slice)?;
+                //
+                // SAFETY: `dst` has `dst_slice.len() - (dst.offset_from(dst_start))`
+                // bytes left, which is `>= head / 2` since `head <= 62` and the
+                // `src.len() >= 256` guard above guarantees at least 128 bytes
+                // of destination remain.
+                //
+                // Built from the raw pointer rather than `&mut dst_slice[..head / 2]`:
+                // slice indexing reborrows through `&mut *dst_slice` first,
+                // which (on the Stacked Borrows model Miri checks) would
+                // invalidate `dst` for the whole buffer -- including the
+                // disjoint remainder this function keeps writing through `dst`
+                // after this call returns -- not just the `head / 2` bytes
+                // actually handed to `decode_tail`.
+                let head_dst = unsafe { core::slice::from_raw_parts_mut(dst, head / 2) };
+                decode_tail(&src[..head], head_dst)?;
                 src = &src[head..];
                 dst = unsafe { dst.add(head / 2) };
             }
 
             while src.len() >= 256 {
-                block256!(_mm256_stream_si256);
+                block256!(stream_store);
             }
             // Streaming stores are only ordered against a fence.
-            _mm_sfence();
+            sfence();
         }
 
         while src.len() >= 256 {

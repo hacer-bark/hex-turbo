@@ -34,7 +34,7 @@ pub(in crate::simd::avx512_vbmi) mod intrinsic_models {
 
     /// Reads bit `n` of a little-endian byte vector, for the pseudocode's
     /// single-bit indexing. Scaffolding, not from Intel.
-    fn bit(v: &[u8; 64], n: usize) -> u8 {
+    const fn bit(v: &[u8; 64], n: usize) -> u8 {
         (v[n / 8] >> (n % 8)) & 1
     }
 
@@ -202,9 +202,16 @@ mod avx512_vbmi_miri_tests {
         // Miri is slow, so this is boundary coverage rather than random
         // lengths: every step size the kernels have (32 and 64 bytes of
         // input), the 128-byte encode block, the 256-character decode block,
-        // and one byte either side of each.
+        // one byte either side of each, and the (Miri-only, much smaller)
+        // `PREFETCH_MIN`/`NONTEMPORAL_MIN` crossings at 200/300 -- see the
+        // `#[cfg(miri)]` constants in `mod.rs`. Those two branches use real
+        // hardware instructions (`asm!`-based prefetch and non-temporal
+        // stores) that Miri cannot execute at all at the production
+        // thresholds (512 KiB / 1 MiB), so without the shrunk constants they
+        // would never run under Miri.
         let boundaries = [
-            0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 191, 192, 255, 256, 257,
+            0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 191, 192, 199, 200, 201, 255, 256, 257,
+            299, 300, 301, 512,
         ];
 
         for &len in &boundaries {
@@ -251,6 +258,30 @@ mod avx512_vbmi_miri_tests {
         };
 
         assert_eq!(&dec_buf[..], input);
+    }
+
+    #[test]
+    fn miri_avx512_vbmi_decode_streaming_store_every_dst_alignment() {
+        // Exercises the non-temporal-store path's `dst`-alignment handling:
+        // the head-fixup that walks to a 32-byte boundary before the first
+        // streamed store. Unlike the AVX2 encoder's streaming path, there is
+        // no odd-`dst.addr()` case to skip here -- the decoder streams
+        // unconditionally past `NONTEMPORAL_MIN`, which is 300 characters
+        // under Miri, so 320 characters of input crosses it regardless of how
+        // much of the front the head-fixup eats. Sweeping every offset from 0
+        // to 33 covers every residue mod 32 at least once.
+        let input = get_data(160);
+        let hex = ref_encode_lower(&input);
+        assert_eq!(hex.len(), 320);
+
+        for off in 0..34usize {
+            let mut buf = vec![0u8; input.len() + off];
+            unsafe {
+                decode_slice_avx512_vbmi(hex.as_bytes(), &mut buf[off..])
+                    .expect("AVX-512 VBMI decoder failed on valid input")
+            };
+            assert_eq!(&buf[off..], &input[..], "dst offset {off}");
+        }
     }
 
     #[test]

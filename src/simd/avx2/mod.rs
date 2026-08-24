@@ -2,24 +2,32 @@ use crate::{Config, Error, scalar};
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m128i, __m256i, _MM_HINT_T0, _mm_loadu_si128, _mm_packus_epi16, _mm_prefetch, _mm_sfence,
+    __m128i, __m256i, _MM_HINT_T0, _mm_loadu_si128, _mm_packus_epi16, _mm_prefetch,
     _mm_storeu_si128, _mm256_add_epi8, _mm256_and_si256, _mm256_castsi256_si128, _mm256_cmpeq_epi8,
     _mm256_cvtepu8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_maddubs_epi16,
     _mm256_min_epu8, _mm256_movemask_epi8, _mm256_or_si256, _mm256_packus_epi16,
     _mm256_permute2x128_si256, _mm256_permute4x64_epi64, _mm256_set1_epi8, _mm256_set1_epi16,
     _mm256_setzero_si256, _mm256_shuffle_epi8, _mm256_slli_epi16, _mm256_srli_epi16,
-    _mm256_storeu_si256, _mm256_stream_si256, _mm256_unpackhi_epi8, _mm256_unpacklo_epi8,
+    _mm256_storeu_si256, _mm256_unpackhi_epi8, _mm256_unpacklo_epi8,
 };
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m128i, __m256i, _MM_HINT_T0, _mm_loadu_si128, _mm_packus_epi16, _mm_prefetch, _mm_sfence,
+    __m128i, __m256i, _MM_HINT_T0, _mm_loadu_si128, _mm_packus_epi16, _mm_prefetch,
     _mm_storeu_si128, _mm256_add_epi8, _mm256_and_si256, _mm256_castsi256_si128, _mm256_cmpeq_epi8,
     _mm256_cvtepu8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_maddubs_epi16,
     _mm256_min_epu8, _mm256_movemask_epi8, _mm256_or_si256, _mm256_packus_epi16,
     _mm256_permute2x128_si256, _mm256_permute4x64_epi64, _mm256_set1_epi8, _mm256_set1_epi16,
     _mm256_setzero_si256, _mm256_shuffle_epi8, _mm256_slli_epi16, _mm256_srli_epi16,
-    _mm256_storeu_si256, _mm256_stream_si256, _mm256_unpackhi_epi8, _mm256_unpacklo_epi8,
+    _mm256_storeu_si256, _mm256_unpackhi_epi8, _mm256_unpacklo_epi8,
 };
+
+// `_mm256_stream_si256`/`_mm_sfence` lower to inline `asm!`, which Miri never
+// executes -- imported only for the real-hardware path; the Miri build routes
+// around them entirely (see `stream_store`/`sfence` below).
+#[cfg(all(not(miri), target_arch = "x86"))]
+use std::arch::x86::{_mm_sfence, _mm256_stream_si256};
+#[cfg(all(not(miri), target_arch = "x86_64"))]
+use std::arch::x86_64::{_mm_sfence, _mm256_stream_si256};
 
 // --- CONSTANTS ---
 
@@ -57,13 +65,19 @@ const WEIGHTS: [u8; 32] = [
 /// both kernels are. Prefetching the load stream is worth ~12% from 32 KiB
 /// through 1 MiB; below that the two extra uops per block are pure loss (~3%
 /// at 4 KiB), so the whole apparatus sits behind one length test.
+#[cfg(not(miri))]
 const PREFETCH_MIN: usize = 32 * 1024;
+#[cfg(miri)]
+const PREFETCH_MIN: usize = 200;
 
 /// How far ahead of the load stream to prefetch, in bytes.
 ///
 /// 512 measured better than 256 everywhere it mattered, and beyond that the
 /// distance starts running past the page the loop is on.
+#[cfg(not(miri))]
 const PREFETCH_DIST: usize = 512;
+#[cfg(miri)]
+const PREFETCH_DIST: usize = 8;
 
 /// Input length at which the encoder switches to non-temporal stores.
 ///
@@ -77,7 +91,10 @@ const PREFETCH_DIST: usize = 512;
 ///
 /// The decoder writes only half what it reads and gets no measurable benefit
 /// from streaming at any size, so it does not do this.
+#[cfg(not(miri))]
 const NONTEMPORAL_MIN: usize = 2 * 1024 * 1024;
+#[cfg(miri)]
+const NONTEMPORAL_MIN: usize = 300;
 
 // --- SCALAR TAILS ---
 //
@@ -97,6 +114,40 @@ fn encode_tail(config: Config, src: &[u8], dst: &mut [u8]) {
 #[inline(never)]
 fn decode_tail(src: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     scalar::decode_slice(src, dst)
+}
+
+// --- STREAMING STORE ---
+//
+// `_mm256_stream_si256` lowers to inline `asm!`, which Miri categorically
+// refuses to execute (not a missing-intrinsic gap, an unconditional "unsupported
+// operation" abort) -- so under Miri it is routed through an ordinary store
+// instead, the same way `zmm_multishift_epi64_epi8` routes around the one VBMI
+// instruction Miri can't run. This is exact, not an approximation: non-temporal
+// is a caching hint that changes write-combining behaviour, not the bytes
+// written or their visibility order to a single-threaded reader, so the two
+// are interchangeable for anything but a benchmark. `_mm_sfence` orders
+// non-temporal stores against later loads; with no non-temporal stores under
+// Miri, there is nothing for it to order, so it becomes a no-op there too.
+
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn stream_store(dst: *mut __m256i, val: __m256i) {
+    #[cfg(miri)]
+    unsafe {
+        _mm256_storeu_si256(dst, val);
+    }
+    #[cfg(not(miri))]
+    unsafe {
+        _mm256_stream_si256(dst, val);
+    }
+}
+
+#[inline]
+fn sfence() {
+    #[cfg(not(miri))]
+    unsafe {
+        _mm_sfence();
+    }
 }
 
 // --- ENCODING ---
@@ -220,37 +271,37 @@ pub(crate) unsafe fn encode_slice_avx2(config: Config, input: &[u8], dst_slice: 
                     // directly: inlining the scalar kernel here would put its
                     // register demand back on the hot path and bring the five
                     // callee-saved pushes back with it.
-                    encode_tail(config, &src[..head], dst_slice);
+                    //
+                    // SAFETY: `dst` has `dst_slice.len() - (dst.offset_from(dst_start))`
+                    // bytes left, which is `>= head * 2` since `head <= 15` and
+                    // the `src.len() >= 128` guard above guarantees at least
+                    // 256 bytes of destination remain.
+                    //
+                    // Built from the raw pointer rather than `&mut dst_slice[..head * 2]`:
+                    // slice indexing reborrows through `&mut *dst_slice` first,
+                    // which (on the Stacked Borrows model Miri checks) would
+                    // invalidate `dst` for the whole buffer -- including the
+                    // disjoint remainder this function keeps writing through
+                    // `dst` after this call returns -- not just the `head * 2`
+                    // bytes actually handed to `encode_tail`.
+                    let head_dst = unsafe { core::slice::from_raw_parts_mut(dst, head * 2) };
+                    encode_tail(config, &src[..head], head_dst);
                     src = &src[head..];
                     dst = unsafe { dst.add(head * 2) };
                 }
 
                 while src.len() >= 128 + PREFETCH_DIST + 64 {
-                    encode_block!(
-                        table,
-                        nibble_mask,
-                        src.as_ptr(),
-                        dst,
-                        _mm256_stream_si256,
-                        true
-                    );
+                    encode_block!(table, nibble_mask, src.as_ptr(), dst, stream_store, true);
                     src = &src[128..];
                     dst = unsafe { dst.add(256) };
                 }
                 while src.len() >= 128 {
-                    encode_block!(
-                        table,
-                        nibble_mask,
-                        src.as_ptr(),
-                        dst,
-                        _mm256_stream_si256,
-                        false
-                    );
+                    encode_block!(table, nibble_mask, src.as_ptr(), dst, stream_store, false);
                     src = &src[128..];
                     dst = unsafe { dst.add(256) };
                 }
                 // Streaming stores are only ordered against a fence.
-                _mm_sfence();
+                sfence();
             } else {
                 while src.len() >= 128 + PREFETCH_DIST + 64 {
                     encode_block!(
