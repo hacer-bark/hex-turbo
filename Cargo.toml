@@ -3,21 +3,16 @@ name = "hex-turbo"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
+build = "build.rs"
 readme = "README.md"
 authors = ["Hacer-Bark <hacer.bark@proton.me>"]
 license = "0BSD"
-description = "The fastest memory-safe Hex engine. Formally verified (Kani/MIRI). Features runtime AVX2/AVX512 detection, zero-allocation API, and robust no_std support."
+description = "A Rust hex codec that peaks past 150 GiB/s, with its unsafe SIMD checked by MIRI and MSan, not just by review."
 repository = "https://github.com/hacer-bark/hex-turbo"
 documentation = "https://docs.rs/hex-turbo"
-build = "build.rs"
 keywords = ["hex", "simd", "avx512", "performance", "encoding"]
 categories = ["encoding", "hardware-support", "no-std", "web-programming"]
-exclude = [
-    ".github",
-    ".gitignore",
-    "benches/img/*",
-    "benches/scripts/*",
-]
+exclude = ["benches/scripts/", "benches/results/"]
 
 [features]
 default = ["std", "simd"]
@@ -41,7 +36,6 @@ unused = { level = "deny", priority = -1 }
 missing_docs = "deny"
 missing_debug_implementations = "deny"
 unreachable_pub = "deny"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [lints.clippy]
 all = "deny"

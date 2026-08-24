@@ -87,7 +87,7 @@ mod exhaustive_tests {
         // - Scalar fallbacks
         // - SSE4.1 thresholds (16-byte bounds)
         // - AVX2 thresholds (32-byte bounds & tails)
-        // - AVX512 thresholds (64-byte bounds & tails)
+        // - AVX-512 VBMI thresholds (64-byte bounds & tails)
         for len in 0..=256 {
             check_engine(&data[..len]);
         }

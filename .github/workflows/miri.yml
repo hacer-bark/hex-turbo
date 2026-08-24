@@ -44,5 +44,5 @@ jobs:
       - name: Run MIRI
         env:
           MIRIFLAGS: "-Zmiri-symbolic-alignment-check"
-          RUSTFLAGS: "-C target-feature=+avx512f,+avx512bw"
+          RUSTFLAGS: "-C target-feature=+avx512f,+avx512bw,+avx512vbmi"
         run: cargo miri test --lib --bins --tests --examples

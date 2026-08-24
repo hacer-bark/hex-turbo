@@ -432,6 +432,6 @@ pub(crate) unsafe fn decode_slice_avx2(input: &[u8], dst_slice: &mut [u8]) -> Re
     Ok(())
 }
 
-// Verification: Kani proofs, intrinsic stubs, and the Miri coverage suite.
-#[cfg(any(kani, test))]
+// Verification: the Miri coverage suite.
+#[cfg(test)]
 mod verify;

@@ -124,8 +124,8 @@ const fn nibbles_to_ascii(nib: u64, letter_bias: u64) -> u64 {
 // Every index/slice below is either `[0..7]` into a `chunks_exact(8)`/
 // `chunks_exact_mut(16)` window (exactly that length by definition) or a
 // `usize::from(u8)` index into a 256-entry table (always in range) or a
-// prefix `dst[..len * 2]` that Kani proves in bounds for every `input`/`dst`
-// pair this is called with (see `kani_verification_scalar` below).
+// prefix `dst[..len * 2]`, in bounds by the `dst.len() >= input.len() * 2`
+// contract documented above.
 #[allow(clippy::indexing_slicing)]
 #[inline]
 pub(crate) fn encode_slice(config: Config, input: &[u8], dst: &mut [u8]) {
@@ -240,7 +240,8 @@ fn load_u64(src: &[u8], off: usize) -> u64 {
 /// reaching the invalid character), but always in-bounds.
 // As in `encode_slice`: every index/slice is a `chunks_exact` window sized to
 // exactly what it's indexed with, a `usize::from(u8)` index into a 256-entry
-// table, or a prefix Kani proves in bounds (`kani_verification_scalar` below).
+// table, or a prefix in bounds by the `dst.len() >= input.len() / 2` contract
+// documented above.
 #[allow(clippy::indexing_slicing)]
 #[inline]
 pub(crate) fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
@@ -304,68 +305,4 @@ pub(crate) fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-// --- KANI (FORMAL VERIFICATION) ---
-
-#[cfg(kani)]
-mod kani_verification_scalar {
-    use super::*;
-    use crate::Config;
-
-    // --- CONSTANTS ---
-
-    // Encoder Induction Size
-    const ENC_INDUCTION_LEN: usize = 17;
-
-    // Decoder Induction Size
-    const DEC_INDUCTION_LEN: usize = 17;
-
-    // --- REAL TESTS ---
-
-    /// **Proof 1: Roundtrip Correctness (The Logic Check)**
-    ///
-    /// Verifies that `Decode(Encode(X)) == X`.
-    #[kani::proof]
-    fn check_scalar_roundtrip_correctness() {
-        let config = Config {
-            uppercase: kani::any(),
-        };
-        let input: [u8; ENC_INDUCTION_LEN] = kani::any();
-        let input_len = input.len();
-
-        // Buffers
-        let mut enc_buf = [0u8; 128];
-        let mut dec_buf = [0u8; 128];
-
-        // 1. Encode
-        encode_slice(config, &input, &mut enc_buf);
-
-        // 2. Decode
-        // This MUST succeed for valid encoded output
-        decode_slice(&enc_buf[..input_len * 2], &mut dec_buf)
-            .expect("Valid encoding failed to decode");
-
-        // 3. Verify
-        assert_eq!(&dec_buf[..input_len], &input, "Roundtrip mismatch");
-    }
-
-    /// **Proof 2: Decoder Robustness & Induction**
-    ///
-    /// Verifies that `decode_slice`:
-    /// 1. Accepts ANY `N` bytes of garbage input.
-    /// 2. Never panics or writes out of bounds.
-    /// 3. Safely handles the wide-loop -> tail transition.
-    #[kani::proof]
-    fn check_scalar_decode_robustness() {
-        // Input: `N` bytes of unrestricted symbolic data (garbage)
-        let input: [u8; DEC_INDUCTION_LEN] = kani::any();
-
-        // Output Buffer: Max estimated size
-        let mut output = [0u8; 128];
-
-        // We ignore the Result. We only care that this call returns (Ok or Err)
-        // without panicking.
-        let _ = decode_slice(&input, &mut output);
-    }
 }

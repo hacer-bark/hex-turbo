@@ -1,0 +1,223 @@
+Benchmarking Hex_Performances/Encode/Turbo/32
+  time:   [2.4866 ns 2.4877 ns 2.4888 ns]
+  thrpt:  [11.975 GiB/s 11.980 GiB/s 11.985 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/32
+  time:   [14.449 ns 14.470 ns 14.491 ns]
+  thrpt:  [2.0566 GiB/s 2.0596 GiB/s 2.0626 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/32
+  time:   [4.0205 ns 4.0215 ns 4.0227 ns]
+  thrpt:  [7.4086 GiB/s 7.4107 GiB/s 7.4126 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/32
+  time:   [2.0139 ns 2.0154 ns 2.0178 ns]
+  thrpt:  [14.770 GiB/s 14.787 GiB/s 14.799 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/32
+  time:   [2.2311 ns 2.2316 ns 2.2321 ns]
+  thrpt:  [26.704 GiB/s 26.710 GiB/s 26.715 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/32
+  time:   [34.219 ns 34.255 ns 34.296 ns]
+  thrpt:  [1.7380 GiB/s 1.7400 GiB/s 1.7418 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/32
+  time:   [6.9324 ns 6.9354 ns 6.9389 ns]
+  thrpt:  [8.5899 GiB/s 8.5942 GiB/s 8.5980 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/32
+  time:   [2.2311 ns 2.2315 ns 2.2321 ns]
+  thrpt:  [26.704 GiB/s 26.710 GiB/s 26.715 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Turbo/512
+  time:   [10.690 ns 10.765 ns 10.829 ns]
+  thrpt:  [44.034 GiB/s 44.293 GiB/s 44.606 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/512
+  time:   [223.62 ns 223.68 ns 223.74 ns]
+  thrpt:  [2.1312 GiB/s 2.1318 GiB/s 2.1324 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/512
+  time:   [16.994 ns 16.999 ns 17.003 ns]
+  thrpt:  [28.043 GiB/s 28.052 GiB/s 28.060 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/512
+  time:   [13.607 ns 13.609 ns 13.611 ns]
+  thrpt:  [35.034 GiB/s 35.038 GiB/s 35.043 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/512
+  time:   [6.2818 ns 6.2829 ns 6.2843 ns]
+  thrpt:  [151.75 GiB/s 151.79 GiB/s 151.82 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/512
+  time:   [548.33 ns 549.32 ns 550.36 ns]
+  thrpt:  [1.7328 GiB/s 1.7361 GiB/s 1.7392 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/512
+  time:   [70.265 ns 70.276 ns 70.288 ns]
+  thrpt:  [13.568 GiB/s 13.570 GiB/s 13.572 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/512
+  time:   [26.920 ns 26.924 ns 26.928 ns]
+  thrpt:  [35.415 GiB/s 35.421 GiB/s 35.426 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Turbo/4096
+  time:   [51.213 ns 51.358 ns 51.467 ns]
+  thrpt:  [74.119 GiB/s 74.277 GiB/s 74.487 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/4096
+  time:   [1.7431 µs 1.7435 µs 1.7439 µs]
+  thrpt:  [2.1875 GiB/s 2.1879 GiB/s 2.1884 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/4096
+  time:   [105.68 ns 105.69 ns 105.70 ns]
+  thrpt:  [36.090 GiB/s 36.093 GiB/s 36.097 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/4096
+  time:   [72.893 ns 73.089 ns 73.329 ns]
+  thrpt:  [52.022 GiB/s 52.193 GiB/s 52.333 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/4096
+  time:   [50.531 ns 50.537 ns 50.543 ns]
+  thrpt:  [150.95 GiB/s 150.97 GiB/s 150.99 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/4096
+  time:   [4.3984 µs 4.4057 µs 4.4134 µs]
+  thrpt:  [1.7287 GiB/s 1.7317 GiB/s 1.7346 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/4096
+  time:   [576.21 ns 576.31 ns 576.42 ns]
+  thrpt:  [13.236 GiB/s 13.238 GiB/s 13.241 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/4096
+  time:   [214.60 ns 214.63 ns 214.67 ns]
+  thrpt:  [35.541 GiB/s 35.546 GiB/s 35.551 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Turbo/65536
+  time:   [947.84 ns 948.05 ns 948.29 ns]
+  thrpt:  [64.363 GiB/s 64.380 GiB/s 64.394 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/65536
+  time:   [27.946 µs 27.950 µs 27.954 µs]
+  thrpt:  [2.1834 GiB/s 2.1837 GiB/s 2.1840 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/65536
+  time:   [1.6582 µs 1.6586 µs 1.6590 µs]
+  thrpt:  [36.790 GiB/s 36.799 GiB/s 36.808 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/65536
+  time:   [1.1272 µs 1.1274 µs 1.1277 µs]
+  thrpt:  [54.125 GiB/s 54.137 GiB/s 54.148 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/65536
+  time:   [868.14 ns 868.33 ns 868.53 ns]
+  thrpt:  [140.55 GiB/s 140.58 GiB/s 140.61 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/65536
+  time:   [369.91 µs 370.02 µs 370.14 µs]
+  thrpt:  [337.71 MiB/s 337.82 MiB/s 337.92 MiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/65536
+  time:   [9.1864 µs 9.1877 µs 9.1892 µs]
+  thrpt:  [13.284 GiB/s 13.286 GiB/s 13.288 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/65536
+  time:   [3.4399 µs 3.4403 µs 3.4408 µs]
+  thrpt:  [35.477 GiB/s 35.482 GiB/s 35.487 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Turbo/524288
+  time:   [11.752 µs 11.754 µs 11.755 µs]
+  thrpt:  [41.537 GiB/s 41.543 GiB/s 41.548 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/524288
+  time:   [223.83 µs 223.87 µs 223.91 µs]
+  thrpt:  [2.1807 GiB/s 2.1811 GiB/s 2.1815 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/524288
+  time:   [13.813 µs 13.816 µs 13.820 µs]
+  thrpt:  [35.332 GiB/s 35.341 GiB/s 35.350 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/524288
+  time:   [12.349 µs 12.351 µs 12.354 µs]
+  thrpt:  [39.525 GiB/s 39.533 GiB/s 39.541 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/524288
+  time:   [11.862 µs 11.876 µs 11.892 µs]
+  thrpt:  [82.119 GiB/s 82.233 GiB/s 82.324 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/524288
+  time:   [3.1676 ms 3.1683 ms 3.1691 ms]
+  thrpt:  [315.54 MiB/s 315.63 MiB/s 315.70 MiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/524288
+  time:   [73.784 µs 73.796 µs 73.810 µs]
+  thrpt:  [13.231 GiB/s 13.233 GiB/s 13.235 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/524288
+  time:   [27.692 µs 27.698 µs 27.704 µs]
+  thrpt:  [35.250 GiB/s 35.258 GiB/s 35.265 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Turbo/1048576
+  time:   [26.975 µs 26.979 µs 26.984 µs]
+  thrpt:  [36.191 GiB/s 36.197 GiB/s 36.203 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/1048576
+  time:   [447.63 µs 447.70 µs 447.78 µs]
+  thrpt:  [2.1809 GiB/s 2.1813 GiB/s 2.1816 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/1048576
+  time:   [29.174 µs 29.192 µs 29.207 µs]
+  thrpt:  [33.436 GiB/s 33.453 GiB/s 33.473 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/1048576
+  time:   [27.274 µs 27.279 µs 27.285 µs]
+  thrpt:  [35.791 GiB/s 35.799 GiB/s 35.805 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/1048576
+  time:   [23.574 µs 23.600 µs 23.631 µs]
+  thrpt:  [82.652 GiB/s 82.760 GiB/s 82.850 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/1048576
+  time:   [6.3470 ms 6.3489 ms 6.3509 ms]
+  thrpt:  [314.92 MiB/s 315.02 MiB/s 315.11 MiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/1048576
+  time:   [147.93 µs 147.96 µs 148.00 µs]
+  thrpt:  [13.197 GiB/s 13.200 GiB/s 13.203 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/1048576
+  time:   [55.842 µs 55.870 µs 55.899 µs]
+  thrpt:  [34.940 GiB/s 34.958 GiB/s 34.976 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Turbo/10485760
+  time:   [386.33 µs 387.26 µs 388.39 µs]
+  thrpt:  [25.144 GiB/s 25.217 GiB/s 25.278 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Std/10485760
+  time:   [4.4955 ms 4.4967 ms 4.4980 ms]
+  thrpt:  [2.1711 GiB/s 2.1717 GiB/s 2.1723 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Fast/10485760
+  time:   [362.54 µs 363.44 µs 364.62 µs]
+  thrpt:  [26.783 GiB/s 26.870 GiB/s 26.937 GiB/s]
+
+Benchmarking Hex_Performances/Encode/Simd/10485760
+  time:   [347.01 µs 348.86 µs 351.02 µs]
+  thrpt:  [27.821 GiB/s 27.993 GiB/s 28.142 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Turbo/10485760
+  time:   [448.03 µs 449.31 µs 450.72 µs]
+  thrpt:  [43.334 GiB/s 43.469 GiB/s 43.593 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Std/10485760
+  time:   [63.535 ms 63.553 ms 63.572 ms]
+  thrpt:  [314.60 MiB/s 314.70 MiB/s 314.79 MiB/s]
+
+Benchmarking Hex_Performances/Decode/Fast/10485760
+  time:   [1.4964 ms 1.4978 ms 1.4995 ms]
+  thrpt:  [13.025 GiB/s 13.040 GiB/s 13.053 GiB/s]
+
+Benchmarking Hex_Performances/Decode/Simd/10485760
+  time:   [590.22 µs 590.96 µs 591.94 µs]
+  thrpt:  [32.996 GiB/s 33.050 GiB/s 33.092 GiB/s]

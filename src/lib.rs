@@ -3,10 +3,11 @@
 //! [![Crates.io](https://img.shields.io/crates/v/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
 //! [![Documentation](https://docs.rs/hex-turbo/badge.svg)](https://docs.rs/hex-turbo)
 //! [![License](https://img.shields.io/crates/l/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
-//! [![Kani Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/verification.yml?label=Kani%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/verification.yml)
+//! [![Tests](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/tests.yml?label=Tests)](https://github.com/hacer-bark/hex-turbo/actions/workflows/tests.yml)
 //! [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/miri.yml?label=MIRI%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/miri.yml)
 //!
-//! **The fastest memory-safe Hex implementation.**
+//! **A Rust hex codec that peaks past 150 GiB/s, with its `unsafe` SIMD checked by MIRI
+//! and `MSan`, not just by review.**
 //!
 //! `hex-turbo` is a production-grade library engineered for **High Frequency Trading (HFT)**, **Mission-Critical Servers**, and **Embedded Systems** where CPU cycles are scarce and Undefined Behavior (UB) is unacceptable.
 //!
@@ -79,10 +80,8 @@
 //! `#![forbid(unsafe_code)]`, and a build with `simd` disabled forbids `unsafe` crate-wide.
 //! To ensure safety, we employ a "Swiss Cheese" model of verification layers:
 //!
-//! * **Formal Verification (Kani):** Mathematical proofs ensure the kernels never read out of bounds or panic on any input (0..∞ bytes).
 //! * **MIRI Audited:** All SIMD paths (AVX512, AVX2) and Scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI to ensure strict memory safety.
 //! * **`MemorySanitizer`:** The codebase is audited with `MSan` to prevent logic errors derived from reading uninitialized memory.
-//! * **Fuzzing:** The codebase is fuzz-tested via `cargo-fuzz` (2.5B+ iterations).
 //!
 //! **[Learn More](https://github.com/hacer-bark/hex-turbo#safety--verification)**: Details on our threat model and formal verification strategy.
 
@@ -130,6 +129,11 @@ pub(crate) mod dispatch {
     //! Slots are split by width because the two kernels have different minimum
     //! block sizes -- feeding a 32-byte payload to the AVX-512 kernel would just
     //! fall through to scalar.
+    //!
+    //! The AVX-512 tier requires `avx512vbmi` on top of `avx512f`/`avx512bw`:
+    //! `vpmultishiftqb`, `vpermb` and `vpermi2b` are what make it worth having,
+    //! and without them the kernel would be no better than the AVX2 one. A CPU
+    //! with AVX-512 but no VBMI (Skylake-SP, Cascade Lake) takes the AVX2 path.
 
     use crate::{Config, Error, scalar, simd};
     use core::sync::atomic::{AtomicPtr, Ordering};
@@ -159,8 +163,9 @@ pub(crate) mod dispatch {
     unsafe fn resolve_encode_wide(config: Config, input: &[u8], dst: &mut [u8]) {
         let f: EncodeFn = if std::is_x86_feature_detected!("avx512f")
             && std::is_x86_feature_detected!("avx512bw")
+            && std::is_x86_feature_detected!("avx512vbmi")
         {
-            simd::encode_slice_avx512
+            simd::encode_slice_avx512_vbmi
         } else if std::is_x86_feature_detected!("avx2") {
             simd::encode_slice_avx2
         } else {
@@ -203,8 +208,9 @@ pub(crate) mod dispatch {
     unsafe fn resolve_decode_wide(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
         let f: DecodeFn = if std::is_x86_feature_detected!("avx512f")
             && std::is_x86_feature_detected!("avx512bw")
+            && std::is_x86_feature_detected!("avx512vbmi")
         {
-            simd::decode_slice_avx512
+            simd::decode_slice_avx512_vbmi
         } else if std::is_x86_feature_detected!("avx2") {
             simd::decode_slice_avx2
         } else {
