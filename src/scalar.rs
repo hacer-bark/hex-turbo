@@ -148,7 +148,12 @@ pub(crate) fn encode_slice(config: Config, input: &[u8], dst: &mut [u8]) {
     let (body_out, tail_out) = dst[..len * 2].split_at_mut(len_aligned * 2);
 
     // Main loop: 8 input bytes -> 16 output chars, one table load per byte.
-    for (src, out) in body_in.chunks_exact(8).zip(body_out.chunks_exact_mut(16)) {
+    for (src, out) in body_in
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .zip(body_out.as_chunks_mut::<16>().0)
+    {
         let lo = u64::from(pairs[usize::from(src[0])])
             | u64::from(pairs[usize::from(src[1])]) << 16
             | u64::from(pairs[usize::from(src[2])]) << 32
@@ -217,10 +222,10 @@ const fn decode_u64(chars: u64) -> (u32, u64) {
 ///
 /// # Panics
 /// Panics if `src` has fewer than `off + 8` bytes; every caller passes an
-/// 8-byte-aligned window from a `chunks_exact(8)`/`chunks_exact(32)` split.
+/// 8-byte-aligned window from an `as_chunks::<8>()`/`as_chunks::<32>()` split.
 #[allow(clippy::indexing_slicing)]
 #[inline]
-fn load_u64(src: &[u8], off: usize) -> u64 {
+const fn load_u64(src: &[u8], off: usize) -> u64 {
     u64::from_le_bytes([
         src[off],
         src[off + 1],
@@ -261,7 +266,12 @@ pub(crate) fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     // Main loop: 32 input chars -> 16 output bytes as four independent chains.
     // Each chain is long (~17 cycles of dependent arithmetic) but only ~5
     // cycles of port pressure, so the win here is overlap, not fewer uops.
-    for (src, out) in body_in.chunks_exact(32).zip(body_out.chunks_exact_mut(16)) {
+    for (src, out) in body_in
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .zip(body_out.as_chunks_mut::<16>().0)
+    {
         let (g0, bad0) = decode_u64(load_u64(src, 0));
         let (g1, bad1) = decode_u64(load_u64(src, 8));
         let (g2, bad2) = decode_u64(load_u64(src, 16));
@@ -282,7 +292,12 @@ pub(crate) fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     let (mid_in, tail_in) = rest_in.split_at(mid_len);
     let (mid_out, tail_out) = rest_out.split_at_mut(mid_len / 2);
 
-    for (src, out) in mid_in.chunks_exact(8).zip(mid_out.chunks_exact_mut(4)) {
+    for (src, out) in mid_in
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .zip(mid_out.as_chunks_mut::<4>().0)
+    {
         let (word, bad) = decode_u64(load_u64(src, 0));
 
         if bad != 0 {
@@ -293,7 +308,7 @@ pub(crate) fn decode_slice(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
     }
 
     // Tail handling (remaining even number of chars < 8)
-    for (src, out) in tail_in.chunks_exact(2).zip(tail_out.iter_mut()) {
+    for (src, out) in tail_in.as_chunks::<2>().0.iter().zip(tail_out.iter_mut()) {
         let high = HEX_DECODE_TABLE[usize::from(src[0])];
         let low = HEX_DECODE_TABLE[usize::from(src[1])];
 

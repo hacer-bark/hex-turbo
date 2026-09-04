@@ -31,18 +31,18 @@ need any of those, this isn't that crate. See the [FAQ](#faq).
 
 ## Contents
 
-- [Quick start](#quick-start)
-- [Zero-allocation API](#zero-allocation-stack--no_std)
-- [Feature flags](#feature-flags)
-- [Compatibility & stability](#compatibility--stability)
-- [Performance & architecture](#performance--architecture)
+- [Quick Start](#quick-start)
+- [Zero-Allocation API](#zero-allocation-stack--no_std)
+- [Feature Flags](#feature-flags)
+- [Compatibility & Stability](#compatibility--stability)
+- [Performance & Architecture](#performance--architecture)
 - [Benchmarks](#benchmarks)
-- [Safety & verification](#safety--verification)
+- [Safety & Verification](#safety--verification)
 - [Ecosystem](#ecosystem)
 - [FAQ](#faq)
 - [License](#license)
 
-## Quick start
+## Quick Start
 
 ```rust
 use hex_turbo::LOWER_CASE;
@@ -62,8 +62,8 @@ constants if you don't want to name an engine.
 ### Zero-Allocation (Stack / `no_std`)
 
 For hot paths where heap allocation is too slow, write directly to stack buffers — the
-`_into` APIs need no allocator. Size the buffers with `encoded_len`/`decoded_len` rather
-than guessing:
+slice APIs need no allocator. Size the buffers with `Engine::encoded_len`/
+`Engine::decoded_len` rather than guessing:
 
 ```rust
 use hex_turbo::LOWER_CASE;
@@ -71,39 +71,45 @@ use hex_turbo::LOWER_CASE;
 let input = b"Raw bytes";
 
 let mut enc_buf = [0u8; 64];
-let enc_len = LOWER_CASE.encode_into(input, &mut enc_buf).unwrap();
+let enc_len = LOWER_CASE.encode_slice(input, &mut enc_buf).unwrap();
 assert_eq!(&enc_buf[..enc_len], b"526177206279746573");
 
 let mut dec_buf = [0u8; 32];
-let dec_len = LOWER_CASE.decode_into(&enc_buf[..enc_len], &mut dec_buf).unwrap();
+let dec_len = LOWER_CASE.decode_slice(&enc_buf[..enc_len], &mut dec_buf).unwrap();
 assert_eq!(&dec_buf[..dec_len], input);
 ```
 
 Both lengths are exact and `const`: `encoded_len(n) == n * 2`, `decoded_len(n) == n / 2`.
 A buffer that's too small is an error (`Error::BufferTooSmall`), never a panic.
 
-## Feature flags
+## Feature Flags
+
+Each x86 SIMD kernel is its own knob, so you compile in only what your target CPUs are
+likely to support. Runtime detection still gates every call — enabling a kernel the host
+lacks just falls back to scalar.
 
 | Feature | Default | Description |
 | :--- | :---: | :--- |
-| `std` | **Yes** | `String`/`Vec` support. Disable for `no_std` (the `_into` APIs need no allocator). |
-| `simd` | **Yes** | AVX-512 VBMI and AVX2 kernels + runtime detection on x86/x86_64. Implies `std`. |
-| `unstable` | **No** | Reserved for exposing the raw internal kernels. Currently a no-op — the kernels are still private. |
+| `std` | **Yes** | `String`/`Vec` support. Disable for `no_std` (the slice APIs need no allocator). |
+| `avx2` | **Yes** | AVX2 kernel + runtime detection on x86/x86_64. Implies `std`. |
+| `avx512-vbmi` | **Yes** | AVX-512 VBMI fast-path kernel on x86/x86_64. Implies `std`. |
+| `simd` | **Yes** | Convenience meta-feature — turns on `avx2` + `avx512-vbmi` at once. |
+| `unstable` | **No** | Exposes the raw internal kernels (`encode_avx2`, `encode_avx512_vbmi`, …). The `*_scalar` accessors are **safe** (they may panic on a too-small buffer, but never invoke UB). |
 
-Runtime detection gates every SIMD call, so enabling `simd` on a host without the
-instructions just falls through to scalar. Disable `simd` and the crate contains no
-`unsafe` at all: the whole thing compiles under `#![forbid(unsafe_code)]`, with nothing
-left to audit. `serde` support is deliberately not included:
-the dependency tree is empty, and the `_into` APIs make a wrapper trivial to write.
+Scalar-only builds are `#![forbid(unsafe_code)]`. Disable every SIMD kernel and the crate
+is pure scalar Rust — nothing to verify, nothing to audit. `serde` support is deliberately
+not included: the dependency tree is empty, and the slice APIs make a wrapper trivial to
+write.
 
 ## Compatibility & Stability
 
-**MSRV: Rust 1.89.0.** We rely on recently stabilized AVX-512 VBMI intrinsics in `core` and do
-not plan to lower this. Edition 2024.
+**MSRV:** Rust 1.89.0. We rely on recently stabilized AVX-512 VBMI intrinsics in `core` and
+do not plan to lower this. Edition 2024.
 
-The public API (`Engine`, the two engine constants, `Error`, the free functions) is
-stable and source-compatible through the `0.1.x` line, following SemVer. Anything behind
-`unstable` is exempt and free to change without notice.
+**API stability:** The public API (`Engine`, the two engine constants, `Error`, the free
+functions) is **Stable** and follows Semantic Versioning. It stays valid and
+backward-compatible throughout the `0.3.x` lifecycle. Anything behind `unstable` is exempt
+and free to change without notice.
 
 Output is standard hex (RFC 4648 §8): `LOWER_CASE` emits `[0-9a-f]`, `UPPER_CASE` emits
 `[0-9A-F]`, and both decoders accept mixed case. It is a drop-in data-format match for
@@ -112,7 +118,7 @@ the `hex` crate.
 ## Performance & Architecture
 
 <details>
-<summary>Why it should be fast — per-kernel breakdown</summary>
+<summary>Why is it fast — per-kernel breakdown</summary>
 
 The design goal is maximum throughput *within* Rust's safety guarantees: vectorized data
 movement instead of byte-at-a-time lookup tables, with error detection pushed into
@@ -186,6 +192,10 @@ want every data point.
 Reproduce it:
 
 ```bash
+sudo apt update && sudo apt install -y build-essential git
+curl --proto '=https' --tlsv1.3 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
 git clone https://github.com/hacer-bark/hex-turbo
 cd hex-turbo
 BENCH_TARGET=all cargo bench 2>&1 | tee benches/results/raw.txt
@@ -212,11 +222,11 @@ Rust and carries `#![forbid(unsafe_code)]`, so on a scalar-only build there is n
 intrinsics and raw pointer arithmetic — so rather than rely on review alone we stack
 independent layers that cover each other's blind spots.
 
-| Kernel | MIRI | MSan | Fuzzing |
-| :--- | :---: | :---: | :---: |
-| **Scalar (safe Rust)** | ✅ | ✅ | ⏳ |
-| **AVX2** | ✅ | ✅ | ⏳ |
-| **AVX-512 VBMI** | ✅ | ✅ | ⏳ |
+| Kernel | MIRI | MSan | Fuzzing | Kani |
+| :--- | :---: | :---: | :---: | :---: |
+| **Scalar (safe Rust)** | ✅ | ✅ | ✅ | ❌ |
+| **AVX2** | ✅ | ✅ | ✅ | ❌ |
+| **AVX-512 VBMI** | ✅ | ✅ | ✅ | ❌ |
 
 * **MIRI** catches Undefined Behavior (provenance, alignment, out-of-bounds pointer
   arithmetic, data races) across the test suite in CI, built with
@@ -225,17 +235,22 @@ independent layers that cover each other's blind spots.
 * **MSan** rebuilds the standard library with instrumentation
   (`-Z build-std -Z sanitizer=memory`) to confirm we never branch on or emit uninitialized
   memory.
-* **Fuzzing** is planned and not wired up yet — there is no `cargo-fuzz` target in the
-  repo today.
+* **Fuzzing** — a `cargo-fuzz` target ([`fuzz/`](fuzz/)) drives both directions through
+  every dispatch tier and every raw kernel the host supports, with each buffer sized to
+  exactly the capacity the kernel's contract asks for so an overrun is a hard failure.
+  No published long run yet; the sibling `base64-turbo` has one, this crate does not.
+* **Model checking (Kani)** is not wired up. The symbolic proofs that cover
+  `base64-turbo`'s loop arithmetic have no counterpart here.
 
-Every merge to `main` must pass MIRI, MSan and the logic tests; see the
+Every merge to `main` must pass MIRI, MSan, clippy and the logic tests; see the
 [CI workflows](https://github.com/hacer-bark/hex-turbo/actions).
 
 <details>
 <summary>What still rests on human judgment</summary>
 
-1. **No fuzzing yet**, so nothing is currently probing inputs beyond what the fixed
-   boundary cases in the MIRI suite and `tests/differential.rs` cover.
+1. **No model checking.** Nothing proves the bounds hold for *every* length; the
+   in-bounds argument rests on review plus the lengths the test suite and the fuzzer
+   happen to reach.
 2. **MIRI is branch coverage, not exhaustive input coverage.** It proves the paths it
    exercises are UB-free, not that every possible input takes a safe path — the boundary
    cases in the test suite are chosen by hand to hit every branch, which is a weaker
@@ -249,7 +264,7 @@ Read the `unsafe` blocks themselves — each documents the contract it relies on
 
 | Library | Lang | SIMD | Verified `unsafe` | Encode (64 KiB) | Decode (64 KiB) |
 | :--- | :---: | :---: | :---: | ---: | ---: |
-| **hex-turbo** | Rust | ✅ | ✅ MIRI + MSan | 64.4 GiB/s | 140.6 GiB/s |
+| **hex-turbo** | Rust | ✅ | ✅ MIRI + MSan + Fuzz | 64.4 GiB/s | 140.6 GiB/s |
 | [hex-simd](https://crates.io/crates/hex-simd) | Rust | ✅ | ❌ | 54.1 GiB/s | 35.5 GiB/s |
 | [faster-hex](https://crates.io/crates/faster-hex) | Rust | ✅ | ❌ | 36.8 GiB/s | 13.3 GiB/s |
 | [hex](https://crates.io/crates/hex) | Rust | ❌ | ✅ safe Rust | 2.2 GiB/s | 0.3 GiB/s |
@@ -265,10 +280,10 @@ zero `unsafe` in your dependency tree and don't care about throughput.
 
 **Is this production-ready?**
 Yes. The API is stable, the benchmarks in this README are measured on the current code
-(see [Benchmarks](#benchmarks)), and MIRI, MSan and the logic tests gate every merge to
-`main` (see [CI workflows](https://github.com/hacer-bark/hex-turbo/actions)). Fuzzing is
-the one layer not wired up yet — see [Safety & Verification](#safety--verification) for
-what that does and doesn't cover today.
+(see [Benchmarks](#benchmarks)), and MIRI, MSan, clippy and the logic tests gate every
+merge to `main` (see [CI workflows](https://github.com/hacer-bark/hex-turbo/actions)).
+Model checking is the one layer not wired up — see
+[Safety & Verification](#safety--verification) for what that does and doesn't cover today.
 
 **Does it work on ARM / Apple Silicon?**
 It compiles and runs, on the safe scalar kernel. There is no NEON kernel — a native ARM
@@ -286,7 +301,7 @@ Yes. Disable default features and use the `_into` APIs; no allocator is required
 
 ```toml
 [dependencies]
-hex-turbo = { version = "0.1", default-features = false }
+hex-turbo = { version = "0.3", default-features = false }
 ```
 
 **Can I crash the decoder with garbage input?**
@@ -298,9 +313,9 @@ the same boundaries under UB instrumentation.
 **Why is `unsafe` acceptable here at all?**
 Only the vector kernels use it — vectorized hex can't be written in safe Rust, because
 the intrinsics themselves require `unsafe`. The scalar kernel needs none and has none.
-For the vector paths the answer is to prove the `unsafe` correct with independent tools
-rather than ask you to trust a code review; if you'd rather carry none of it, disable
-`simd` and the crate is `#![forbid(unsafe_code)]` end to end.
+For the vector paths the answer is to check the `unsafe` with independent tools (MIRI,
+MSan, fuzzing) rather than ask you to trust a code review; if you'd rather carry none of
+it, disable every SIMD kernel and the crate is `#![forbid(unsafe_code)]` end to end.
 
 **Do you support `serde`?**
 No. It was removed to keep the dependency tree empty; wrap the `_into` APIs in your own

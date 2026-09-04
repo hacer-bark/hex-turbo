@@ -1,10 +1,16 @@
-//! Cross-crate hex codec comparison.
+//! Throughput benchmarks comparing `hex-turbo` against the `hex`, `faster-hex`
+//! and `hex-simd` crates.
 //!
 //! Every engine writes into a caller-owned buffer that is allocated once,
 //! outside the timed loop, so what is measured is the codec and nothing else.
 //! Every engine also produces lowercase, so all four are doing identical work.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    missing_docs,
+    clippy::too_many_lines
+)]
 
 use criterion::{
     AxisScale, BenchmarkId, Criterion, PlotConfiguration, Throughput, criterion_group,
@@ -46,18 +52,13 @@ fn should_run(target_name: &str) -> bool {
     targets.contains(&target_name.to_lowercase())
 }
 
-// Four competitors x two directions, each needing its own `bench_with_input`
-// call (Criterion's API, not a repeated computation) -- splitting this up
-// would mean threading `group` and both buffers through several helpers for
-// no reduction in what's actually being done.
-#[allow(clippy::too_many_lines)]
 fn bench_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Hex_Performances");
 
-    // Logarithmic scaling is essential for viewing 32B vs 10MB
+    // Logarithmic scaling to view 32 B and 10 MB on the same axis.
     group.plot_config(PlotConfiguration::default().summary_scale(AxisScale::Logarithmic));
-    group.measurement_time(Duration::from_secs(5));
-    group.warm_up_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(15));
+    group.warm_up_time(Duration::from_secs(5));
     group.noise_threshold(0.05);
     group.sample_size(50);
 
@@ -90,7 +91,7 @@ fn bench_comparison(c: &mut Criterion) {
                 |b, d| {
                     b.iter(|| {
                         TURBO
-                            .encode_into(black_box(d), black_box(&mut encode_buffer))
+                            .encode_slice(black_box(d), black_box(&mut encode_buffer))
                             .unwrap()
                     });
                 },
@@ -151,7 +152,7 @@ fn bench_comparison(c: &mut Criterion) {
                 |b, s| {
                     b.iter(|| {
                         TURBO
-                            .decode_into(black_box(s.as_bytes()), black_box(&mut decode_buffer))
+                            .decode_slice(black_box(s.as_bytes()), black_box(&mut decode_buffer))
                             .unwrap()
                     });
                 },

@@ -1,29 +1,28 @@
 //! # Hex Turbo
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
-//! [![Documentation](https://docs.rs/hex-turbo/badge.svg)](https://docs.rs/hex-turbo)
 //! [![License](https://img.shields.io/crates/l/hex-turbo.svg)](https://crates.io/crates/hex-turbo)
-//! [![Tests](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/tests.yml?label=Tests)](https://github.com/hacer-bark/hex-turbo/actions/workflows/tests.yml)
+//! [![Logic Tests](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/tests.yml?label=Logic%20Tests)](https://github.com/hacer-bark/hex-turbo/actions/workflows/tests.yml)
 //! [![MIRI Verified](https://img.shields.io/github/actions/workflow/status/hacer-bark/hex-turbo/miri.yml?label=MIRI%20Verified)](https://github.com/hacer-bark/hex-turbo/actions/workflows/miri.yml)
 //!
 //! **A Rust hex codec that peaks past 150 GiB/s, with its `unsafe` SIMD checked by MIRI
 //! and `MSan`, not just by review.**
 //!
-//! `hex-turbo` is a production-grade library engineered for **High Frequency Trading (HFT)**, **Mission-Critical Servers**, and **Embedded Systems** where CPU cycles are scarce and Undefined Behavior (UB) is unacceptable.
+//! `hex-turbo` targets high-throughput systems where CPU cycles are scarce and Undefined
+//! Behavior is unacceptable. "Memory-safe" here is a specific, bounded claim: the
+//! `unsafe` SIMD paths are checked by [MIRI](https://github.com/rust-lang/miri) (a strict
+//! UB interpreter) on top of `MemorySanitizer` audits and a `cargo-fuzz` target — see the
+//! "Safety & Verification" section below for what each layer does and does not cover.
+//! This crate is **not** faster than unchecked C/assembly implementations and does not
+//! claim to be.
 //!
-//! This crate provides runtime CPU detection to utilize **AVX512** and **AVX2** intrinsics.
-//! It includes a highly optimized scalar fallback for non-SIMD targets and supports `no_std` environments.
+//! It picks the best kernel available at runtime: **AVX-512 VBMI** or **AVX2** on
+//! `x86_64` via runtime CPU detection, and an optimized table-driven scalar kernel
+//! everywhere else, in 100% safe Rust. `no_std` environments are supported.
 //!
-//! > ⚠️ **Minimum Supported Rust Version (MSRV):** This crate requires **Rust 1.89.0 or newer** due to reliance on stabilized AVX512 intrinsics in the standard library.
-//!
-//! ## Usage
-//!
-//! Add this to your `Cargo.toml`:
-//!
-//! ```toml
-//! [dependencies]
-//! hex-turbo = "0.1"
-//! ```
+//! Dispatch degrades on *size* as well as on CPU flags: inputs under 64 bytes skip
+//! AVX-512 VBMI and inputs under 32 bytes skip AVX2, so short payloads never pay for a
+//! vector setup they cannot amortize.
 //!
 //! ### Basic API (Allocating)
 //!
@@ -40,7 +39,7 @@
 //! let encoded = LOWER_CASE.encode(data);
 //! assert_eq!(encoded, "48656c6c6f20776f726c64");
 //!
-//! // Decode to Result<Vec<u8>, Error>
+//! // Decode to Vec<u8>
 //! let decoded = LOWER_CASE.decode(&encoded).unwrap();
 //! assert_eq!(decoded, data);
 //! # }
@@ -57,33 +56,46 @@
 //! let input = b"Raw bytes";
 //! let mut output = [0u8; 64]; // Pre-allocated stack buffer
 //!
-//! // Encode to String
-//! let len = LOWER_CASE.encode_into(input, &mut output).unwrap();
+//! // Returns Result<usize, Error> indicating bytes written
+//! let len = LOWER_CASE.encode_slice(input, &mut output).unwrap();
 //!
 //! assert_eq!(&output[..len], b"526177206279746573");
 //! ```
 //!
 //! ## Feature Flags
 //!
-//! This crate is highly configurable via Cargo features:
+//! Each x86 SIMD kernel is an independent knob, so a target can compile in only
+//! what its CPUs are likely to support. Runtime detection still gates every call,
+//! so a kernel the host lacks simply falls back to scalar.
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | **`std`** | **Yes** | Enables `String` and `Vec` support. Disable this for `no_std` environments. |
-//! | **`simd`** | **Yes** | Enables runtime detection for **AVX512** and **AVX2** intrinsics. If disabled or unsupported by hardware, the crate falls back to scalar logic. |
-//! | **`unstable`** | **No** | Reserved for exposing the raw internal SIMD kernels. Currently a no-op. |
+//! | **`std`** | **Yes** | `String`/`Vec` support. Disable for `no_std` (the slice APIs need no allocator). |
+//! | **`avx2`** | **Yes** | AVX2 kernel + runtime detection on `x86`/`x86_64`. Implies `std`. |
+//! | **`avx512-vbmi`** | **Yes** | AVX-512 VBMI fast-path kernel on `x86`/`x86_64`. Implies `std`. |
+//! | **`simd`** | **Yes** | Convenience meta-feature — turns on `avx2` + `avx512-vbmi` at once. |
+//! | **`unstable`** | **No** | Exposes the raw internal kernels (`encode_avx2`, `encode_avx512_vbmi`, …). The `*_scalar` accessors are safe. |
+//!
+//! If **no** SIMD kernel is enabled, the build is pure scalar Rust and the crate carries
+//! `#![forbid(unsafe_code)]` — memory safety then holds by construction, with no `unsafe`
+//! anywhere to audit.
 //!
 //! ## Safety & Verification
 //!
-//! The SIMD kernels use `unsafe` for intrinsics and pointer arithmetic to achieve maximum
-//! performance. The scalar kernel does not: it is plain safe Rust under
-//! `#![forbid(unsafe_code)]`, and a build with `simd` disabled forbids `unsafe` crate-wide.
-//! To ensure safety, we employ a "Swiss Cheese" model of verification layers:
+//! We use `unsafe` SIMD intrinsics and raw pointer arithmetic, so rather than rely on
+//! review alone we stack independent verification layers that cover each other's blind
+//! spots:
 //!
-//! * **MIRI Audited:** All SIMD paths (AVX512, AVX2) and Scalar fallbacks are verified with **MIRI** (Undefined Behavior checker) in CI to ensure strict memory safety.
-//! * **`MemorySanitizer`:** The codebase is audited with `MSan` to prevent logic errors derived from reading uninitialized memory.
+//! *   **MIRI:** All SIMD paths (AVX512-VBMI, AVX2) and the scalar fallback run under
+//!     **MIRI** (an Undefined Behavior interpreter) in CI, covering every distinct code path
+//!     at least once. Branch coverage, not exhaustive input coverage.
+//! *   **`MemorySanitizer`:** The standard library is rebuilt with instrumentation to confirm
+//!     we never branch on or emit uninitialized memory.
+//! *   **Fuzzing:** a `cargo-fuzz` target drives both directions across every dispatch tier.
+//! *   **Model checking:** not wired up. The Kani proofs that cover the sibling
+//!     `base64-turbo` kernels have no counterpart here yet.
 //!
-//! **[Learn More](https://github.com/hacer-bark/hex-turbo#safety--verification)**: Details on our threat model and formal verification strategy.
+//! **[Learn More](https://github.com/hacer-bark/hex-turbo#safety--verification)**: exactly what is proven, and what isn't.
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![doc(issue_tracker_base_url = "https://github.com/hacer-bark/hex-turbo/issues/")]
@@ -93,7 +105,6 @@
 // purely to call `_mm*_loadu_*`/`_mm*_storeu_*` intrinsics, which are explicitly
 // documented to work on any alignment ("u" = unaligned).
 #![allow(clippy::cast_ptr_alignment)]
-#![allow(clippy::redundant_pub_crate)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 #[cfg(all(doctest, feature = "std"))]
@@ -116,7 +127,7 @@ pub(crate) mod dispatch {
     //! immediately before a call that cannot be inlined (a `#[target_feature]`
     //! function never inlines into a caller that lacks the feature), and it is
     //! an atomic load, so a caller's loop cannot hoist it. Measured on Coffee
-    //! Lake it cost ~6 core cycles on every `encode_into`/`decode_into` -- about
+    //! Lake it cost ~6 core cycles on every `encode_slice`/`decode_slice` -- about
     //! a quarter of the total for a 32-byte payload.
     //!
     //! Instead each kernel slot starts out pointing at its own resolver. The
@@ -161,14 +172,18 @@ pub(crate) mod dispatch {
     static ENCODE_WIDE: AtomicPtr<()> = AtomicPtr::new(resolve_encode_wide as *mut ());
 
     unsafe fn resolve_encode_wide(config: Config, input: &[u8], dst: &mut [u8]) {
-        let f: EncodeFn = if std::is_x86_feature_detected!("avx512f")
-            && std::is_x86_feature_detected!("avx512bw")
-            && std::is_x86_feature_detected!("avx512vbmi")
-        {
-            simd::encode_slice_avx512_vbmi
-        } else if std::is_x86_feature_detected!("avx2") {
-            simd::encode_slice_avx2
-        } else {
+        let f: EncodeFn = 'pick: {
+            #[cfg(feature = "avx512-vbmi")]
+            if std::is_x86_feature_detected!("avx512f")
+                && std::is_x86_feature_detected!("avx512bw")
+                && std::is_x86_feature_detected!("avx512vbmi")
+            {
+                break 'pick simd::encode_slice_avx512_vbmi;
+            }
+            #[cfg(feature = "avx2")]
+            if std::is_x86_feature_detected!("avx2") {
+                break 'pick simd::encode_slice_avx2;
+            }
             scalar_encode
         };
         ENCODE_WIDE.store(f as *mut (), Ordering::Relaxed);
@@ -181,10 +196,12 @@ pub(crate) mod dispatch {
         unsafe { load() }
     }
 
-    // --- Encode, 32..64 bytes ---
+    // --- Encode, 32..64 bytes (AVX2 only; the VBMI kernel needs 64) ---
 
+    #[cfg(feature = "avx2")]
     static ENCODE_NARROW: AtomicPtr<()> = AtomicPtr::new(resolve_encode_narrow as *mut ());
 
+    #[cfg(feature = "avx2")]
     unsafe fn resolve_encode_narrow(config: Config, input: &[u8], dst: &mut [u8]) {
         let f: EncodeFn = if std::is_x86_feature_detected!("avx2") {
             simd::encode_slice_avx2
@@ -195,6 +212,7 @@ pub(crate) mod dispatch {
         unsafe { f(config, input, dst) }
     }
 
+    #[cfg(feature = "avx2")]
     #[inline(always)]
     pub(crate) fn encode_narrow() -> EncodeFn {
         slot!(ENCODE_NARROW, EncodeFn);
@@ -206,14 +224,18 @@ pub(crate) mod dispatch {
     static DECODE_WIDE: AtomicPtr<()> = AtomicPtr::new(resolve_decode_wide as *mut ());
 
     unsafe fn resolve_decode_wide(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
-        let f: DecodeFn = if std::is_x86_feature_detected!("avx512f")
-            && std::is_x86_feature_detected!("avx512bw")
-            && std::is_x86_feature_detected!("avx512vbmi")
-        {
-            simd::decode_slice_avx512_vbmi
-        } else if std::is_x86_feature_detected!("avx2") {
-            simd::decode_slice_avx2
-        } else {
+        let f: DecodeFn = 'pick: {
+            #[cfg(feature = "avx512-vbmi")]
+            if std::is_x86_feature_detected!("avx512f")
+                && std::is_x86_feature_detected!("avx512bw")
+                && std::is_x86_feature_detected!("avx512vbmi")
+            {
+                break 'pick simd::decode_slice_avx512_vbmi;
+            }
+            #[cfg(feature = "avx2")]
+            if std::is_x86_feature_detected!("avx2") {
+                break 'pick simd::decode_slice_avx2;
+            }
             scalar::decode_slice
         };
         DECODE_WIDE.store(f as *mut (), Ordering::Relaxed);
@@ -226,10 +248,12 @@ pub(crate) mod dispatch {
         unsafe { load() }
     }
 
-    // --- Decode, 32..64 bytes ---
+    // --- Decode, 32..64 bytes (AVX2 only; the VBMI kernel needs 64) ---
 
+    #[cfg(feature = "avx2")]
     static DECODE_NARROW: AtomicPtr<()> = AtomicPtr::new(resolve_decode_narrow as *mut ());
 
+    #[cfg(feature = "avx2")]
     unsafe fn resolve_decode_narrow(input: &[u8], dst: &mut [u8]) -> Result<(), Error> {
         let f: DecodeFn = if std::is_x86_feature_detected!("avx2") {
             simd::decode_slice_avx2
@@ -240,6 +264,7 @@ pub(crate) mod dispatch {
         unsafe { f(input, dst) }
     }
 
+    #[cfg(feature = "avx2")]
     #[inline(always)]
     pub(crate) fn decode_narrow() -> DecodeFn {
         slot!(DECODE_NARROW, DecodeFn);
@@ -254,7 +279,7 @@ pub(crate) mod dispatch {
 }
 
 // ======================================================================
-// ERROR DEFINITION
+// Error Definition
 // ======================================================================
 
 /// Errors that can occur during Hex encoding or decoding operations.
@@ -262,8 +287,8 @@ pub(crate) mod dispatch {
 pub enum Error {
     /// The input length is invalid for Hex decoding.
     ///
-    /// Hex encoded data (with padding) must strictly have a length divisible by 4.
-    /// If the input string is truncated or has incorrect padding length, this error is returned.
+    /// Hex encoded data must strictly have an even length — two characters per byte.
+    /// A truncated or otherwise odd-length input returns this error.
     InvalidLength,
 
     /// An invalid character was encountered during decoding.
@@ -274,7 +299,7 @@ pub enum Error {
 
     /// The provided output buffer is too small to hold the result.
     ///
-    /// This error is returned by the zero-allocation APIs (e.g., `encode_into`, `decode_into`)
+    /// This error is returned by the slice APIs (e.g., `encode_slice`, `decode_slice`)
     /// when the destination slice passed by the user does not have enough capacity
     /// to store the encoded or decoded data.
     BufferTooSmall,
@@ -313,7 +338,7 @@ pub(crate) struct Config {
 /// This struct holds the configuration for encoding/decoding.
 /// It is designed to be immutable and thread-safe.
 ///
-/// ## Examples
+/// # Examples
 ///
 /// ```rust
 /// # #[cfg(feature = "std")]
@@ -402,14 +427,14 @@ fn into_ascii_string(bytes: Vec<u8>) -> String {
 
 impl Engine {
     // ======================================================================
-    // Length Calculators
+    // Length calculations
     // ======================================================================
 
     /// Calculates the exact buffer size required to encode `input_len` bytes.
     ///
     /// This method computes the size of encoded data.
     ///
-    /// ## Examples
+    /// # Examples
     ///
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -425,7 +450,7 @@ impl Engine {
 
     /// Calculates the **exact** buffer size required to decode `input_len` bytes.
     ///
-    /// ## Examples
+    /// # Examples
     ///
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -440,7 +465,7 @@ impl Engine {
     }
 
     // ======================================================================
-    // Zero-Allocation APIs
+    // Slice APIs
     // ======================================================================
 
     /// Encodes `input` into the provided `output` buffer.
@@ -448,22 +473,22 @@ impl Engine {
     /// This is a "Zero-Allocation" API designed for hot paths. It writes directly
     /// into the destination slice without creating intermediate `Vec`.
     ///
-    /// ## Arguments
+    /// # Arguments
     ///
     /// * `input`: The binary data to encode.
     /// * `output`: A mutable slice to write the Hex string into.
     ///
-    /// ## Returns
+    /// # Returns
     ///
     /// * `Ok(usize)`: The number of bytes written to `output`.
     /// * `Err(Error::BufferTooSmall)`: If `output.len()` is less than [`encoded_len`](Self::encoded_len).
     ///
-    /// ## Errors
+    /// # Errors
     ///
     /// Returns [`Error::BufferTooSmall`] if `output` cannot hold [`encoded_len`](Self::encoded_len)
     /// bytes.
     ///
-    /// ## Examples
+    /// # Examples
     ///
     /// ```rust
     /// # #[cfg(feature = "std")]
@@ -474,12 +499,16 @@ impl Engine {
     /// let mut buff = vec![0u8; LOWER_CASE.encoded_len(data.len())];
     ///
     /// // Encode to Result<usize, Error>
-    /// LOWER_CASE.encode_into(data, &mut buff).unwrap();
+    /// LOWER_CASE.encode_slice(data, &mut buff).unwrap();
     /// assert_eq!(buff, b"48656c6c6f20776f726c64");
     /// # }
     /// ```
     #[inline]
-    pub fn encode_into<T: AsRef<[u8]>>(&self, input: T, output: &mut [u8]) -> Result<usize, Error> {
+    pub fn encode_slice<T: AsRef<[u8]>>(
+        &self,
+        input: T,
+        output: &mut [u8],
+    ) -> Result<usize, Error> {
         let input = input.as_ref();
         let len = input.len();
 
@@ -499,18 +528,18 @@ impl Engine {
 
     /// Decodes `input` into the provided `output` buffer.
     ///
-    /// ## Returns
+    /// # Returns
     ///
     /// * `Ok(usize)`: The number of bytes written to `output`.
     /// * `Err(Error)`: If the input is invalid or the buffer is too small.
     ///
-    /// ## Errors
+    /// # Errors
     ///
     /// Returns [`Error::InvalidLength`] if `input.len()` is odd, [`Error::InvalidCharacter`]
     /// if `input` contains a byte outside the Hex alphabet, or [`Error::BufferTooSmall`] if
     /// `output` cannot hold [`decoded_len`](Self::decoded_len) bytes.
     ///
-    /// ## Examples
+    /// # Examples
     ///
     /// ```rust
     /// # #[cfg(feature = "std")]
@@ -526,14 +555,18 @@ impl Engine {
     /// let mut buff = vec![0u8; LOWER_CASE.decoded_len(encoded.len())];
     ///
     /// // Decode to Result<usize, Error>
-    /// LOWER_CASE.decode_into(&encoded, &mut buff).unwrap();
+    /// LOWER_CASE.decode_slice(&encoded, &mut buff).unwrap();
     /// assert_eq!(buff, data);
     /// # }
     /// ```
     ///
     /// **Note**: Input hex can be uppercase or lowercase.
     #[inline]
-    pub fn decode_into<T: AsRef<[u8]>>(&self, input: T, output: &mut [u8]) -> Result<usize, Error> {
+    pub fn decode_slice<T: AsRef<[u8]>>(
+        &self,
+        input: T,
+        output: &mut [u8],
+    ) -> Result<usize, Error> {
         let input = input.as_ref();
         let len = input.len();
 
@@ -562,7 +595,7 @@ impl Engine {
     ///
     /// This is the most convenient method for general usage.
     ///
-    /// ## Examples
+    /// # Examples
     ///
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -585,10 +618,10 @@ impl Engine {
 
     /// Allocates a new `Vec<u8>` and decodes the input data into it.
     ///
-    /// ## Errors
+    /// # Errors
     /// Returns `Error` if the input contains invalid characters or has an invalid length.
     ///
-    /// ## Examples
+    /// # Examples
     ///
     /// ```
     /// use hex_turbo::LOWER_CASE;
@@ -613,6 +646,38 @@ impl Engine {
         Ok(out)
     }
 
+    /// Encodes `input` and appends it to `output`.
+    #[inline]
+    #[cfg(feature = "std")]
+    pub fn encode_string<T: AsRef<[u8]>>(&self, input: T, output: &mut String) {
+        output.push_str(&Self::encode(self, input));
+    }
+
+    /// Decodes `input` and appends the result to `output`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidLength`] / [`Error::InvalidCharacter`] if `input` is not
+    /// valid Hex.
+    #[inline]
+    #[cfg(feature = "std")]
+    pub fn decode_vec<T: AsRef<[u8]>>(&self, input: T, output: &mut Vec<u8>) -> Result<(), Error> {
+        let input = input.as_ref();
+        if input.len() % 2 != 0 {
+            return Err(Error::InvalidLength);
+        }
+        let start = output.len();
+        let decoded = Self::decoded_len(self, input.len());
+        output.resize(start.saturating_add(decoded), 0);
+        match Self::decode_dispatch(input, &mut output[start..]) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                output.truncate(start);
+                Err(e)
+            }
+        }
+    }
+
     // ========================================================================
     // Internal Dispatchers
     // ========================================================================
@@ -626,6 +691,7 @@ impl Engine {
                 unsafe { (dispatch::encode_wide())(self.config, input, dst) };
                 return;
             }
+            #[cfg(feature = "avx2")]
             if len >= 32 {
                 unsafe { (dispatch::encode_narrow())(self.config, input, dst) };
                 return;
@@ -644,6 +710,7 @@ impl Engine {
             if len >= 64 {
                 return unsafe { (dispatch::decode_wide())(input, dst) };
             }
+            #[cfg(feature = "avx2")]
             if len >= 32 {
                 return unsafe { (dispatch::decode_narrow())(input, dst) };
             }
@@ -652,32 +719,147 @@ impl Engine {
         // Fallback: Scalar / non-SIMD target / short inputs.
         scalar::decode_slice(input, dst)
     }
+
+    // ========================================================================
+    // Raw kernel accessors (`unstable`)
+    // ========================================================================
+
+    /// Raw access to the direct AVX2 encoding logic.
+    ///
+    /// # Safety
+    ///
+    /// - `dst` must hold at least `input.len() * 2` bytes. Prefer
+    ///   [`Engine::encoded_len`] to compute it.
+    /// - The caller must ensure the target CPU supports AVX2 at runtime. Running this on a CPU
+    ///   without AVX2 causes an illegal instruction crash.
+    ///
+    /// Prefer the safe higher-level APIs (e.g. [`Engine::encode`]) unless you need this bypass.
+    #[cfg(all(x86_simd, feature = "avx2", feature = "unstable"))]
+    pub unsafe fn encode_avx2(&self, input: &[u8], dst: &mut [u8]) {
+        // SAFETY: Caller must uphold the contracts documented on this function.
+        unsafe { simd::encode_slice_avx2(self.config, input, dst) }
+    }
+
+    /// Raw access to the direct AVX2 decoding logic.
+    ///
+    /// # Safety
+    ///
+    /// - `dst` must hold at least `input.len() / 2` bytes. Prefer
+    ///   [`Engine::decoded_len`] to compute it.
+    /// - The caller must ensure the target CPU supports AVX2 at runtime. Running this on a CPU
+    ///   without AVX2 causes an illegal instruction crash.
+    ///
+    /// Prefer the safe higher-level APIs (e.g. [`Engine::decode`]) unless you need this bypass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCharacter`] if `input` is not valid Hex.
+    #[cfg(all(x86_simd, feature = "avx2", feature = "unstable"))]
+    pub unsafe fn decode_avx2(&self, input: &[u8], dst: &mut [u8]) -> Result<usize, Error> {
+        // SAFETY: Caller must uphold the contracts documented on this function.
+        unsafe { simd::decode_slice_avx2(input, dst)? };
+        Ok(input.len() / 2)
+    }
+
+    /// Raw access to the direct AVX-512-VBMI encoding logic, the fastest kernel in the crate.
+    ///
+    /// # Safety
+    ///
+    /// - `dst` must hold at least `input.len() * 2` bytes. Prefer
+    ///   [`Engine::encoded_len`] to compute it.
+    /// - The caller must ensure the target CPU supports the `avx512f`, `avx512bw` and
+    ///   `avx512vbmi` subsets at runtime. Running this without all three causes an illegal
+    ///   instruction crash.
+    ///
+    /// Prefer the safe higher-level APIs (e.g. [`Engine::encode`]) unless you need this bypass.
+    #[cfg(all(x86_simd, feature = "avx512-vbmi", feature = "unstable"))]
+    pub unsafe fn encode_avx512_vbmi(&self, input: &[u8], dst: &mut [u8]) {
+        // SAFETY: Caller must uphold the contracts documented on this function.
+        unsafe { simd::encode_slice_avx512_vbmi(self.config, input, dst) }
+    }
+
+    /// Raw access to the direct AVX-512-VBMI decoding logic.
+    ///
+    /// # Safety
+    ///
+    /// - `dst` must hold at least `input.len() / 2` bytes. Prefer
+    ///   [`Engine::decoded_len`] to compute it.
+    /// - The caller must ensure the target CPU supports the `avx512f`, `avx512bw` and
+    ///   `avx512vbmi` subsets at runtime. Running this without all three causes an illegal
+    ///   instruction crash.
+    ///
+    /// Prefer the safe higher-level APIs (e.g. [`Engine::decode`]) unless you need this bypass.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCharacter`] if `input` is not valid Hex.
+    #[cfg(all(x86_simd, feature = "avx512-vbmi", feature = "unstable"))]
+    pub unsafe fn decode_avx512_vbmi(&self, input: &[u8], dst: &mut [u8]) -> Result<usize, Error> {
+        // SAFETY: Caller must uphold the contracts documented on this function.
+        unsafe { simd::decode_slice_avx512_vbmi(input, dst)? };
+        Ok(input.len() / 2)
+    }
+
+    /// Raw access to the direct scalar encoding logic.
+    ///
+    /// Unlike the SIMD accessors, this is a **safe** function: the scalar kernel uses no
+    /// `unsafe`, so every write is bounds-checked.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dst` is smaller than `input.len() * 2` (a bounds check, not memory
+    /// corruption). Size it with [`Engine::encoded_len`].
+    #[cfg(feature = "unstable")]
+    pub fn encode_scalar(&self, input: &[u8], dst: &mut [u8]) {
+        scalar::encode_slice(self.config, input, dst);
+    }
+
+    /// Raw access to the direct scalar decoding logic.
+    ///
+    /// Like [`Engine::encode_scalar`], this is a **safe** function — the scalar kernel
+    /// contains no `unsafe`, so a too-small `dst` panics on a bounds check rather than
+    /// corrupting memory. Size `dst` with [`Engine::decoded_len`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dst` is too small to hold the decoded output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCharacter`] if `input` is not valid Hex.
+    #[cfg(feature = "unstable")]
+    pub fn decode_scalar(&self, input: &[u8], dst: &mut [u8]) -> Result<usize, Error> {
+        scalar::decode_slice(input, dst)?;
+        Ok(input.len() / 2)
+    }
 }
 
 // ========================================================================
-// Simple API
+// Free functions
 // ========================================================================
 
-/// Simplified API which calls to `LOWER_CASE.encode(data)`
+/// Encodes `data` with the lowercase RFC 4648 §8 alphabet.
 #[cfg(feature = "std")]
+#[inline]
 pub fn encode<T: AsRef<[u8]>>(data: T) -> String {
     LOWER_CASE.encode(data)
 }
 
-/// Simplified API which calls to `UPPER_CASE.encode(data)`
+/// Encodes `data` with the uppercase RFC 4648 §8 alphabet.
 #[cfg(feature = "std")]
+#[inline]
 pub fn encode_upper<T: AsRef<[u8]>>(data: T) -> String {
     UPPER_CASE.encode(data)
 }
 
-/// Simplified API which calls to `LOWER_CASE.decode(data)`
+/// Decodes `data`, accepting either case.
 ///
-/// ## Errors
+/// # Errors
 ///
-/// See [`Engine::decode_into`].
-///
-/// **Note**: Input hex can be uppercase or lowercase.
+/// Returns [`Error::InvalidLength`] / [`Error::InvalidCharacter`] if `data` is not
+/// valid Hex.
 #[cfg(feature = "std")]
+#[inline]
 pub fn decode<T: AsRef<[u8]>>(data: T) -> Result<Vec<u8>, Error> {
     LOWER_CASE.decode(data)
 }

@@ -3,46 +3,53 @@ name: Security Audit
 on:
   push:
     branches: [ "main" ]
-    tags-ignore:
-      - '**'
-    paths:
-      - '**.rs'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/miri.yml'
+    tags-ignore: ["**"]
   pull_request:
     branches: [ "main" ]
-    paths:
-      - '**.rs'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/miri.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+  MIRIFLAGS: "-Zmiri-symbolic-alignment-check"
 
 jobs:
   miri-check:
-    name: MIRI Safety Checks
+    name: MIRI Safety Checks (x86_64)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust Nightly with MIRI
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Run MIRI
         env:
-          MIRIFLAGS: "-Zmiri-symbolic-alignment-check"
-          RUSTFLAGS: "-C target-feature=+avx512f,+avx512bw,+avx512vbmi"
-        run: cargo miri test --lib --bins --tests --examples
+          RUSTFLAGS: "-C target-feature=+avx2,+avx512f,+avx512bw,+avx512vbmi"
+        run: |
+          echo "Running MIRI with AVX2 + AVX512-VBMI enabled..."
+          cargo miri test --features unstable --lib --bins --tests --examples
+
+  miri-check-aarch64:
+    name: MIRI Safety Checks (aarch64, scalar-only build)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install Rust Nightly with MIRI
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run MIRI
+        run: cargo miri test --features unstable --lib --bins --tests --examples

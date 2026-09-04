@@ -1,26 +1,31 @@
 [package]
 name = "hex-turbo"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.89"
-build = "build.rs"
 readme = "README.md"
 authors = ["Hacer-Bark <hacer.bark@proton.me>"]
 license = "0BSD"
-description = "A Rust hex codec that peaks past 150 GiB/s, with its unsafe SIMD checked by MIRI and MSan, not just by review."
+description = "A hex engine that peaks past 150 GiB/s, with its unsafe SIMD checked by MIRI and MSan."
 repository = "https://github.com/hacer-bark/hex-turbo"
 documentation = "https://docs.rs/hex-turbo"
-keywords = ["hex", "simd", "avx512", "performance", "encoding"]
+keywords = ["hex", "simd", "avx512-vbmi", "performance", "encoding"]
 categories = ["encoding", "hardware-support", "no-std", "web-programming"]
 exclude = ["benches/scripts/", "benches/results/"]
 
 [features]
 default = ["std", "simd"]
-unstable = []
-std = []
-simd = ["std"]
 
-[dependencies]
+# Core
+std = []
+unstable = []
+
+# x86/x86_64 SIMD kernels.
+avx2 = ["std"]
+avx512-vbmi = ["std"]
+
+# Convenience meta-feature: every x86 SIMD kernel at once.
+simd = ["avx2", "avx512-vbmi"]
 
 [dev-dependencies]
 rand = "0.10"
@@ -38,21 +43,21 @@ missing_debug_implementations = "deny"
 unreachable_pub = "deny"
 
 [lints.clippy]
-all = "deny"
-pedantic = "deny"
-nursery = "deny"
-cargo = "deny"
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
-exit = "deny"
 dbg_macro = "deny"
-indexing_slicing = "deny"
+exit = "deny"
+redundant_pub_crate = "allow"
 
 [lints.rustdoc]
-all = "deny"
+all = { level = "deny", priority = -1 }
 broken_intra_doc_links = "deny"
 
 [[bench]]
